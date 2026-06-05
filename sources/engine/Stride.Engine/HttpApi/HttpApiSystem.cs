@@ -76,11 +76,18 @@ namespace Stride.Engine.HttpApi
                 return await SceneRoutes.HandleRequest(method, url, body, this);
             }
 
+            // Mod routes
+            if (url.StartsWith("/api/v1/mod/"))
+            {
+                return await ModRoutes.HandleRequest(method, url, body, this);
+            }
+
             // Status with game info
             if (method == "GET" && url == "/api/v1/status")
             {
                 var sceneSystem = Game?.Services.GetService<SceneSystem>();
                 var graphicsDevice = Game?.Services.GetService<Graphics.GraphicsDevice>();
+                var modHost = Game?.Services.GetService<Modding.ModHost>();
 
                 return System.Text.Json.JsonSerializer.Serialize(new
                 {
@@ -92,6 +99,11 @@ namespace Stride.Engine.HttpApi
                     {
                         renderer = graphicsDevice.RendererName,
                         platform = Graphics.GraphicsDevice.Platform.ToString()
+                    } : null,
+                    mods = modHost != null ? new
+                    {
+                        loaded = modHost.LoadedMods.Count,
+                        modsDirectory = modHost.ModsDirectory
                     } : null,
                     time = DateTime.UtcNow
                 }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });

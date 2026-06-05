@@ -4,11 +4,13 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Stride.Core.Assets.Editor.ViewModel;
 using Stride.Core.Diagnostics;
+using Stride.Engine.Modding;
 
 namespace Stride.GameStudio.HttpApi
 {
@@ -121,10 +123,11 @@ namespace Stride.GameStudio.HttpApi
                     });
                 }
 
-                // Mod stubs
+                // Mod routes — mod discovery/validation works in editor;
+                // enable/disable/unload require game runtime
                 if (url.StartsWith("/api/v1/mod/"))
                 {
-                    return JsonSerializer.Serialize(new { error = "Not implemented", status = 501, message = "Mod system pending Phase 3-6" });
+                    return HandleModRoute(method, url, body);
                 }
 
                 // Render stubs
@@ -153,6 +156,102 @@ namespace Stride.GameStudio.HttpApi
                 Log.Error($"[HttpApi] Error handling {method} {url}: {ex}");
                 return JsonSerializer.Serialize(new { error = ex.Message });
             }
+        }
+
+        private static string HandleModRoute(string method, string url, string? body)
+        {
+            // Mod discovery — works in editor (file scan, no game runtime needed)
+            if (method == "GET" && url == "/api/v1/mod/discover")
+            {
+                var modsDir = Path.Combine(Directory.GetCurrentDirectory(), "mods");
+                try
+                {
+                    var discovered = ModDiscovery.Discover(modsDir);
+                    var mods = discovered.Select(m => new
+                    {
+                        id = m.Manifest.Id,
+                        name = m.Manifest.Name,
+                        version = m.Manifest.Version,
+                        type = m.Manifest.Type
+                    }).ToList();
+                    return JsonSerializer.Serialize(new { mods, count = mods.Count, modsDirectory = modsDir },
+                        new JsonSerializerOptions { WriteIndented = true });
+                }
+                catch (Exception ex)
+                {
+                    return JsonSerializer.Serialize(new { error = ex.Message });
+                }
+            }
+
+            // Mod install — works in editor (file extraction)
+            if (method == "POST" && url == "/api/v1/mod/install")
+            {
+                if (string.IsNullOrWhiteSpace(body))
+                    return JsonSerializer.Serialize(new { error = "Request body required with 'path' field" });
+
+                try
+                {
+                    var doc = JsonSerializer.Deserialize<JsonElement>(body);
+                    var path = doc.TryGetProperty("path", out var pathProp) ? pathProp.GetString() : null;
+                    if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                        return JsonSerializer.Serialize(new { error = "Valid 'path' to .modpkg file required" });
+
+                    var modsDir = Path.Combine(Directory.GetCurrentDirectory(), "mods");
+                    Directory.CreateDirectory(modsDir);
+                    var pkg = ModPackage.FromModPkg(path, Path.Combine(modsDir, ".temp_extract"));
+
+                    // Validate
+                    var errors = ModValidator.Validate(pkg.Manifest);
+                    if (errors.Count > 0)
+                        return JsonSerializer.Serialize(new { error = "Validation failed", validationErrors = errors });
+
+                    // Extract to mods/{id}/
+                    var targetDir = Path.Combine(modsDir, pkg.Manifest.Id);
+                    if (Directory.Exists(targetDir))
+                        Directory.Delete(targetDir, recursive: true);
+                    System.IO.Compression.ZipFile.ExtractToDirectory(path, targetDir, overwriteFiles: true);
+
+                    return JsonSerializer.Serialize(new
+                    {
+                        success = true,
+                        message = $"Mod '{pkg.Manifest.Id}' v{pkg.Manifest.Version} installed. Full activation requires game runtime.",
+                        mod = new { id = pkg.Manifest.Id, name = pkg.Manifest.Name, version = pkg.Manifest.Version, type = pkg.Manifest.Type }
+                    }, new JsonSerializerOptions { WriteIndented = true });
+                }
+                catch (Exception ex)
+                {
+                    return JsonSerializer.Serialize(new { error = ex.Message });
+                }
+            }
+
+            // Mod validate — validate a mod.json without installing
+            if (method == "POST" && url == "/api/v1/mod/validate")
+            {
+                if (string.IsNullOrWhiteSpace(body))
+                    return JsonSerializer.Serialize(new { error = "Request body required with mod.json content" });
+                try
+                {
+                    var manifest = ModManifest.FromJson(body);
+                    var errors = ModValidator.Validate(manifest);
+                    return JsonSerializer.Serialize(new
+                    {
+                        valid = errors.Count == 0,
+                        errors,
+                        mod = new { id = manifest.Id, name = manifest.Name, version = manifest.Version }
+                    }, new JsonSerializerOptions { WriteIndented = true });
+                }
+                catch (Exception ex)
+                {
+                    return JsonSerializer.Serialize(new { error = ex.Message });
+                }
+            }
+
+            // Operations requiring game runtime
+            return JsonSerializer.Serialize(new
+            {
+                error = "Game runtime required",
+                message = "Mod listing, enable/disable, and unload require a running game. Launch a game project first."
+            });
         }
 
         private static string GetStatus()

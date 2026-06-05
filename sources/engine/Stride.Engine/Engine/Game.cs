@@ -235,6 +235,10 @@ namespace Stride.Engine
             HttpApi = new HttpApi.HttpApiSystem(Services);
             Services.AddService(HttpApi);
 
+            // Modulus: ModHost for mod lifecycle management (Phase 3)
+            var modHost = new Modding.ModHost(Services);
+            Services.AddService(modHost);
+
             // Creates the graphics device manager
             GraphicsDeviceManager = new GraphicsDeviceManager(this);
             Services.AddService<IGraphicsDeviceManager>(GraphicsDeviceManager);
