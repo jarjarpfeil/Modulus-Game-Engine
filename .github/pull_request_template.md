@@ -2,7 +2,6 @@
 
 <!--- Provide a general summary of your changes in the Title of this PR -->
 <!--- Describe your changes in detail here -->
-<!--- Visit https://doc.stride3d.net/latest/en/contributors/contribution-workflow/github-pull-request-guidelines.html for more -->
 
 ## Related Issue
 
@@ -18,16 +17,23 @@
 - [ ] Bug fix (non-breaking change which fixes an issue)
 - [ ] New feature (non-breaking change which adds functionality)
 - [ ] Breaking change (fix or feature that would cause existing functionality to change)
+- [ ] Modding API change
+- [ ] Stride upstream sync
 
 ## Checklist
 
-<!--- Go over all the following points, and put an `x` in all the boxes that apply. -->
-<!--- If you're unsure about any of these, don't hesitate to ask. We're here to help! -->
+<!--- Put an `x` in all the boxes that apply: -->
 
-- [ ] My change requires a change to the documentation.
-- [ ] I have added tests to cover my changes.
-- [ ] All new and existing tests passed.
-- [ ] **I have built and run the editor to try this change out.**
+- [ ] My code follows the project's coding style
+- [ ] I have added XML documentation for new public APIs
+- [ ] I have added tests that prove my fix is effective or my feature works
+- [ ] New and existing unit tests pass locally with my changes
+- [ ] I have checked for regressions in existing Stride tests
 
-<!--- Open this PR as a draft if it isn't ready yet, you can do so by clicking on the arrow next to the 'Create pull request' button. -->
-<!--- You will be able to set it back as ready to be reviewed anytime after it has been created. -->
+## Screenshots (if applicable)
+
+<!--- For visual changes, add before/after screenshots -->
+
+## Additional Notes
+
+<!--- Any additional context, concerns, or notes for reviewers -->

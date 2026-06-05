@@ -1,28 +1,67 @@
 # 🤝 Contributing
 
-For questions and general discussions, please join our [Discord server](https://discord.gg/f6aerfE) or participate in [GitHub Discussions](https://github.com/stride3d/stride/discussions).
+We welcome contributions to Modulus Engine! This project is a fork of [Stride](https://stride3d.net/) with a focus on modding support.
 
-To report bugs or propose features, please use the [Issues](https://github.com/stride3d/stride/issues) section on GitHub.
+## Getting Started
 
-We welcome code contributions via pull requests. Issues tagged with **[`good first issue`](https://github.com/stride3d/stride/labels/good%20first%20issue)** are great starting points for code contributions.
+1. Fork the repository
+2. Clone your fork: `git clone https://github.com/YOUR-USERNAME/modulus.git`
+3. Create a feature branch: `git checkout -b feature/your-feature`
+4. Make your changes
+5. Submit a pull request
 
-You can help us translate Stride; check out our [Localization Guide](https://doc.stride3d.net/latest/en/contributors/engine/localization.html).
+## Development Setup
 
-## Triggering CI tests on a PR
+### Prerequisites
 
-Most CI runs automatically on PR commits. Two suites — editor screenshots and samples
-screenshots — only run on demand because they're slow and drift-prone. A bot listens for
-`/test` comments to dispatch them. Comment `/test help` on any PR for the full command list.
+- .NET 10 SDK
+- Windows (required for Game Studio editor)
+- Visual Studio 2022 or later (recommended)
 
-Quick examples:
-- `/test editor samples` — run both screenshot suites
-- `/test linux-game` — re-run a specific main-CI suite (useful for transient failures)
-- `/test windows-game-vulkan` — re-run a specific graphics-API variant
+### Building
 
-Bot definition: [`.github/workflows/pr-test-chatops.yml`](workflows/pr-test-chatops.yml).
-Only repo collaborators can trigger.
+```bash
+dotnet build build/Stride.sln
+```
 
-## Earn Money by Contributing
+### Running Tests
 
-If you are a developer with solid experience in C#, rendering techniques, or game development, we want to hire you! We have allocated funds from supporters on [Open Collective](https://opencollective.com/stride3d) and can pay for work on certain projects. [More information is available here](https://doc.stride3d.net/latest/en/contributors/engine/bug-bounties.html).
+```bash
+dotnet test build/Stride.Tests.Simple.slnf
+```
 
+## Code Guidelines
+
+- Follow existing Stride coding conventions
+- Use clear, self-documenting code (no `#region` directives)
+- Add XML documentation for public APIs
+- Include tests for new features
+
+## What to Work On
+
+Check out our [Issues](https://github.com/Modulus-Engine/modulus/issues) for tasks. Issues tagged with **`good first issue`** are great starting points.
+
+### Priority Areas
+
+- Modding API design and implementation
+- AssemblyLoadContext isolation
+- Editor integration for mod management
+- Cross-game mod compatibility
+- Documentation and examples
+
+## Pull Request Process
+
+1. Ensure your code builds with zero errors
+2. Run existing tests to check for regressions
+3. Update documentation if needed
+4. Fill out the PR template completely
+5. Request review from maintainers
+
+## Questions?
+
+- Open a [GitHub Discussion](https://github.com/Modulus-Engine/modulus/discussions)
+- Join our Discord (coming soon)
+
+## License
+
+By contributing, you agree that your contributions will be licensed under the [MIT License](LICENSE.md).

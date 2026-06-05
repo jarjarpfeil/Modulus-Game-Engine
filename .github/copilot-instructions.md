@@ -1,32 +1,71 @@
-# Stride Game Engine Copilot Instructions
+# Modulus Engine — AI Agent Instructions
 
-This document provides guidelines and best practices for using GitHub Copilot and Copilot Chat within the Stride Game Engine repository. The goal is to ensure Copilot is used effectively and consistently to maintain code quality, project standards, and team productivity.
+This document provides guidelines for AI coding assistants (Copilot, Claude, Cursor, etc.) working in the Modulus Engine repository.
 
-## Coding & Contribution Guidelines
+## Project Overview
 
-- Prefer concise, well-documented, and idiomatic C# code.
-- Do not use `#region` directives; prefer clear, self-documenting code.
+Modulus is a modding-focused game engine forked from [Stride](https://stride3d.net/). The codebase is primarily C# targeting .NET 10.
 
-## Copilot Pull Request Code Review Instructions
+## Coding Guidelines
 
-Stride is a game engine project that requires careful code reviews to maintain quality and performance. Please follow these guidelines when reviewing pull requests (PRs):
+- **Language:** C# 12+ with .NET 10 features
+- **Style:** Follow existing Stride conventions (PascalCase for public, _camelCase for private fields)
+- **No `#region` directives** — prefer clear, self-documenting code
+- **XML documentation** required for all public APIs
+- **Tests:** xUnit for unit tests, integration tests for engine systems
 
-- Generate a neat and concise Pull Request Overview, highlighting the most important changes.
-- Focus reviews on logic, safety, performance, and code consistency with the existing codebase.
-- Avoid suggesting large architectural changes in PR reviews.
-- Comments on formatting, grammar, or spelling are welcome.
-- Minor style or nit-pick comments are acceptable to maintain consistency.
-- Do not review auto-generated, third-party code, binary files, or assets.
-- If you find a bug or performance issue, suggest a concrete fix in the PR.
-- For large PRs (20+ C#/*.cs files), do not attempt a full review, only highlight critical or blocking issues.
-- Always consider the context and established patterns in the Stride codebase before making suggestions.
-- **Always check for missing, incomplete, or incorrect XML documentation comments** on public types, methods, properties, and fields.
-- **Provide XML comment suggestions as individual, separate items** so they can be reviewed and approved independently.
-- **Do not rewrite existing XML comments unless they contain errors** such as incorrect information, poor grammar, typos, or lack clarity. Preserve well-written documentation.
-- When suggesting XML comments, ensure they are:
-  - Accurate and describe the actual functionality
-  - Consistent with existing documentation style in the codebase
-  - Include `<summary>`, `<param>`, `<returns>`, `<exception>` and `<remarks>` tags where appropriate
-  - Clear and helpful for API consumers 
+## Architecture
 
-The goal is to minimize noise and maximize helpful, actionable feedback.
+### Key Systems
+
+- **ECS:** Entity Component System (`Stride.Engine`)
+- **Rendering:** Graphics abstraction layer (`Stride.Graphics`)
+- **Assets:** Content pipeline and asset management (`Stride.Assets`)
+- **Editor:** Game Studio WPF application (`Stride.GameStudio`)
+- **Modding:** AssemblyLoadContext-based mod isolation (`Modulus.Modding.Api`) — *coming soon*
+
+### Project Structure
+
+```
+sources/
+├── core/           # Stride.Core — serialization, reflection, math
+├── engine/         # Stride.Engine — ECS, scene, components
+├── graphics/       # Stride.Graphics — GPU abstraction
+├── rendering/      # Stride.Rendering — render pipeline
+├── editor/         # Stride.GameStudio — WPF editor
+├── assets/         # Stride.Assets — content pipeline
+└── templates/      # Project templates
+```
+
+## Pull Request Reviews
+
+When reviewing PRs:
+
+- Focus on logic, safety, performance, and code consistency
+- Avoid suggesting large architectural changes in PR reviews
+- Comments on formatting, grammar, or spelling are welcome
+- Do not review auto-generated, third-party code, binary files, or assets
+- If you find a bug or performance issue, suggest a concrete fix
+
+## Modding API (Planned)
+
+The modding layer will be in `sources/engine/Stride.Engine/Modding/` and `Modulus.Modding.Api`. Key design principles:
+
+- **Stable ABI:** `Modulus.Modding.Api` is the only guaranteed-stable assembly
+- **ALC isolation:** Each mod loads in its own AssemblyLoadContext
+- **Event hooks, not inline logic:** Minimize changes to Stride core files
+- **Managed C# only:** No native DLLs in mods
+
+## Build System
+
+- **Solution:** `build/Stride.sln` (full) or `build/Stride.Runtime.slnf` (fast subset)
+- **Target:** .NET 10
+- **Platform:** Windows required for editor and asset pipeline
+- **CI:** GitHub Actions on Windows
+
+## Common Pitfalls
+
+- Stride's ECS is not thread-safe — marshal work to the game thread
+- Asset compilation requires `AssetCompiler.exe` as external process
+- Use solution filters for faster builds during development
+- The editor uses WPF, not WinUI or Avalonia
