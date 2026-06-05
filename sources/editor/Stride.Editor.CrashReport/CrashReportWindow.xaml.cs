@@ -63,7 +63,7 @@ public partial class CrashReportWindow : Window
             var error = "An error occurred while opening the browser. You can access Github Issues at the following url:"
                         + Environment.NewLine + Environment.NewLine + GithubIssuesUrl;
 
-            MessageBox.Show(error, "Stride", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(error, "Modulus Engine", MessageBoxButton.OK, MessageBoxImage.Error);
         }
 
         DialogResult = true;

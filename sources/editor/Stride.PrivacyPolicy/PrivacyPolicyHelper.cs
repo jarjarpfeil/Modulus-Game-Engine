@@ -49,7 +49,7 @@ namespace Stride.PrivacyPolicy
                 app.Run(new PrivacyPolicyWindow(true));
                 if (!Stride40Accepted)
                 {
-                    MessageBox.Show("The Privacy Policy has been declined. The application will now exit.", "Stride", MessageBoxButton.OK, MessageBoxImage.Information);
+                    MessageBox.Show("The Privacy Policy has been declined. The application will now exit.", "Modulus Engine", MessageBoxButton.OK, MessageBoxImage.Information);
                     Environment.Exit(1);
                 }
                 // We restart the application after Privacy Policy acceptance.

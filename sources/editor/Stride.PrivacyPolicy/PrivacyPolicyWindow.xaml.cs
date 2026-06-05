@@ -40,7 +40,7 @@ namespace Stride.PrivacyPolicy
         {
             if (PrivacyPolicyAccepted && !PrivacyPolicyHelper.AcceptStride40())
             {
-                MessageBox.Show("Failed to save Stride 4.0 agreement.", "Stride", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show("Failed to save Modulus Engine 4.0 agreement.", "Modulus Engine", MessageBoxButton.OK, MessageBoxImage.Error);
             }
             
             Close();
