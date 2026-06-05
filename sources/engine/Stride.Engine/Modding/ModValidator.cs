@@ -14,7 +14,8 @@ namespace Stride.Engine.Modding;
 public static class ModValidator
 {
     private static readonly Regex KebabCaseRegex = new(@"^[a-z0-9]+(-[a-z0-9]+)*(\.[a-z0-9]+(-[a-z0-9]+)*)*$", RegexOptions.Compiled);
-    private static readonly Regex SemverRegex = new(@"^\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?(\+[a-zA-Z0-9.]+)?$", RegexOptions.Compiled);
+    private static readonly Regex SemverRegex = new(@"^\d+\.\d+\.?\d*(-[a-zA-Z0-9.]+)?(\+[a-zA-Z0-9.]+)?$", RegexOptions.Compiled);
+    private static readonly Regex SemverRegexStrict = new(@"^\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?(\+[a-zA-Z0-9.]+)?$", RegexOptions.Compiled);
     private static readonly string[] ValidTypes = { "standard", "patch", "data" };
 
     /// <summary>
@@ -34,13 +35,13 @@ public static class ModValidator
         if (string.IsNullOrWhiteSpace(manifest.Name))
             errors.Add("mod.json 'name' is required");
 
-        // version: required, semver
+        // version: required, semver (3-part)
         if (string.IsNullOrWhiteSpace(manifest.Version))
             errors.Add("mod.json 'version' is required");
-        else if (!SemverRegex.IsMatch(manifest.Version))
+        else if (!SemverRegexStrict.IsMatch(manifest.Version))
             errors.Add($"mod.json 'version' must be semver (e.g. '1.0.0'), got: '{manifest.Version}'");
 
-        // apiVersion: required, semver
+        // apiVersion: required, semver (2 or 3 part — "1.0" or "1.0.0")
         if (string.IsNullOrWhiteSpace(manifest.ApiVersion))
             errors.Add("mod.json 'apiVersion' is required");
         else if (!SemverRegex.IsMatch(manifest.ApiVersion))

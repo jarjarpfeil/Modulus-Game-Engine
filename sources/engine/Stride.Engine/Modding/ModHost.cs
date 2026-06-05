@@ -15,6 +15,9 @@ namespace Stride.Engine.Modding;
 /// <summary>
 /// Central mod lifecycle manager. Handles discovery, validation, loading, unloading,
 /// and provides the shared assembly resolution map for cross-ALC type identity.
+///
+/// Integrates ModContentManager for asset resolution, ModEventBus for inter-mod
+/// communication, and properly calls IMod lifecycle methods.
 /// </summary>
 public class ModHost
 {
@@ -25,6 +28,8 @@ public class ModHost
     private readonly Dictionary<string, Assembly> _sharedAssemblies = new(StringComparer.OrdinalIgnoreCase);
     private readonly ModTypeRegistry _typeRegistry;
     private readonly ModSystemRegistry _systemRegistry;
+    private readonly ModEventBus _eventBus;
+    private readonly ModContentManager _contentManager;
 
     /// <summary>Path to the mods/ directory. Defaults to "mods" relative to game content.</summary>
     public string ModsDirectory { get; set; } = "mods";
@@ -32,11 +37,28 @@ public class ModHost
     /// <summary>All currently loaded mod packages, keyed by mod ID.</summary>
     public IReadOnlyDictionary<string, ModPackage> LoadedMods => _loadedMods;
 
+    /// <summary>The event bus for inter-mod communication.</summary>
+    public IModEventBus EventBus => _eventBus;
+
+    /// <summary>The content manager for multi-source asset resolution.</summary>
+    public ModContentManager ContentManager => _contentManager;
+
     public ModHost(IServiceRegistry services)
     {
         _services = services ?? throw new ArgumentNullException(nameof(services));
         _typeRegistry = new ModTypeRegistry();
         _systemRegistry = new ModSystemRegistry(services);
+        _eventBus = new ModEventBus();
+        _contentManager = new ModContentManager(services);
+    }
+
+    /// <summary>
+    /// Registers ModHost as a service so it's accessible from HttpApiSystem and other game systems.
+    /// </summary>
+    public void RegisterService()
+    {
+        _services.AddService(this);
+        Log.Info("[ModHost] Registered as engine service");
     }
 
     // ──────────────────────────────────────────────
@@ -70,6 +92,14 @@ public class ModHost
     /// <summary>
     /// Loads a mod from a directory containing mod.json + assemblies/.
     /// Returns the loaded ModPackage, or throws on failure.
+    ///
+    /// Full lifecycle:
+    /// 1. Parse manifest, validate
+    /// 2. Load assemblies into collectible ALC
+    /// 3. Register types with serializer/AssemblyRegistry
+    /// 4. Register systems with ECS
+    /// 5. Register mod content with ModContentManager
+    /// 6. Instantiate and call IMod.Initialize()
     /// </summary>
     public ModPackage LoadMod(string modDirectory)
     {
@@ -125,13 +155,35 @@ public class ModHost
         // Register systems with ECS
         _systemRegistry.RegisterModSystems(package);
 
-        // Load the entry point (IMod)
+        // Register mod content for asset resolution
+        _contentManager.RegisterModContent(package);
+
+        // Load and initialize the entry point (IMod)
         if (manifest.EntryPoint != null && package.ModAssembly != null)
         {
             var entryType = package.ModAssembly.GetType(manifest.EntryPoint);
             if (entryType != null)
             {
-                package.ModInstance = Activator.CreateInstance(entryType);
+                try
+                {
+                    var instance = Activator.CreateInstance(entryType);
+                    package.ModInstance = instance;
+
+                    // If it implements IMod, call Initialize + OnEnabled
+                    if (instance is IMod mod)
+                    {
+                        var logger = GlobalLogger.GetLogger($"Mod.{manifest.Id}");
+                        var context = new ModContext(_services, logger, _eventBus, modDirectory);
+                        mod.Initialize(context);
+                        mod.OnEnabled();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"[ModHost] Failed to initialize mod '{manifest.Id}': {ex.Message}");
+                    package.State = ModState.Errored;
+                    package.ErrorReason = $"Initialize failed: {ex.Message}";
+                }
             }
             else
             {
@@ -139,6 +191,7 @@ public class ModHost
             }
         }
 
+        package.IsEnabled = package.State == ModState.Loaded;
         _loadedMods[manifest.Id] = package;
         Log.Info($"[ModHost] Loaded mod: {manifest.Id} v{manifest.Version}");
 
@@ -165,6 +218,11 @@ public class ModHost
         // Extract in place for direct directory access
         System.IO.Compression.ZipFile.ExtractToDirectory(destPkg, targetDir, overwriteFiles: true);
 
+        // Clean up temp extraction
+        var tempDir = Path.Combine(ModsDirectory, ".temp_extract");
+        if (Directory.Exists(tempDir))
+            Directory.Delete(tempDir, recursive: true);
+
         return LoadMod(targetDir);
     }
 
@@ -173,7 +231,8 @@ public class ModHost
     // ──────────────────────────────────────────────
 
     /// <summary>
-    /// Unloads a mod: unregisters types, systems, unloads ALC, and attempts cleanup.
+    /// Unloads a mod: calls IMod.OnDisabled(), unsubscribes events, unregisters
+    /// types/systems/content, unloads ALC, and forces GC.
     /// </summary>
     public void UnloadMod(string modId)
     {
@@ -181,6 +240,19 @@ public class ModHost
             return;
 
         Log.Info($"[ModHost] Unloading mod: {modId}");
+
+        // Call IMod.OnDisabled() if available
+        if (package.ModInstance is IMod mod)
+        {
+            try { mod.OnDisabled(); }
+            catch (Exception ex) { Log.Warning($"[ModHost] OnDisabled() failed for '{modId}': {ex.Message}"); }
+        }
+
+        // Unsubscribe all event handlers from this mod
+        _eventBus.UnsubscribeAll(modId);
+
+        // Unregister mod content
+        _contentManager.UnregisterModContent(package);
 
         // Unregister systems first
         _systemRegistry.UnregisterModSystems(package);
@@ -200,7 +272,7 @@ public class ModHost
         // Unload ALC
         package.UnloadAssemblies();
 
-        // Force GC
+        // Force GC (plan says 2 cycles for reliable ALC collection)
         for (int i = 0; i < 2; i++)
         {
             GC.Collect();
@@ -236,6 +308,18 @@ public class ModHost
             _systemRegistry.RegisterModSystems(package);
         }
 
+        // Call IMod.OnEnabled()
+        if (package.ModInstance is IMod mod)
+        {
+            try { mod.OnEnabled(); }
+            catch (Exception ex)
+            {
+                Log.Error($"[ModHost] OnEnabled() failed for '{modId}': {ex.Message}");
+                package.State = ModState.Errored;
+                package.ErrorReason = $"OnEnabled failed: {ex.Message}";
+            }
+        }
+
         Log.Info($"[ModHost] Enabled mod: {modId}");
     }
 
@@ -250,6 +334,13 @@ public class ModHost
         if (package.State != ModState.Loaded)
             return; // Already disabled
 
+        // Call IMod.OnDisabled()
+        if (package.ModInstance is IMod mod)
+        {
+            try { mod.OnDisabled(); }
+            catch (Exception ex) { Log.Warning($"[ModHost] OnDisabled() failed for '{modId}': {ex.Message}"); }
+        }
+
         package.State = ModState.Disabled;
         package.IsEnabled = false;
 
@@ -259,6 +350,36 @@ public class ModHost
             _typeRegistry.UnregisterModAssembly(package.ModAssembly);
 
         Log.Info($"[ModHost] Disabled mod: {modId}");
+    }
+
+    // ──────────────────────────────────────────────
+    //  Load All (discovery + load in dependency order)
+    // ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Discovers all mods in ModsDirectory, validates dependencies, and loads them.
+    /// Returns the list of successfully loaded packages.
+    /// </summary>
+    public List<ModPackage> LoadAllMods()
+    {
+        var discovered = DiscoverMods();
+        var loaded = new List<ModPackage>();
+
+        foreach (var pkg in discovered)
+        {
+            try
+            {
+                LoadMod(pkg.ModDirectory);
+                loaded.Add(pkg);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"[ModHost] Failed to load mod '{pkg.Manifest.Id}': {ex.Message}");
+            }
+        }
+
+        Log.Info($"[ModHost] Loaded {loaded.Count}/{discovered.Count} mods");
+        return loaded;
     }
 
     // ──────────────────────────────────────────────

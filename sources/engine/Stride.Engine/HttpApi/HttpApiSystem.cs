@@ -122,6 +122,14 @@ namespace Stride.Engine.HttpApi
         {
             base.Initialize();
 
+            // Wire ModHost into ModRoutes so mod API endpoints work
+            var modHost = Game?.Services.GetService<Modding.ModHost>();
+            if (modHost != null)
+            {
+                ModRoutes.SetModHost(modHost);
+                Log.Info("[HttpApi] ModHost connected to mod routes");
+            }
+
             // Register with the shared EditorHttpServer
             var server = EditorHttpServer.Instance;
             if (server != null)
