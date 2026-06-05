@@ -82,6 +82,20 @@ namespace Stride.Engine.HttpApi
                 return await ModRoutes.HandleRequest(method, url, body, this);
             }
 
+            // Asset routes
+            if (url.StartsWith("/api/v1/asset/"))
+            {
+                var result = await AssetRoutes.HandleRequest(method, url, body, null, this);
+                if (result != null) return result;
+            }
+
+            // Editor routes
+            if (url.StartsWith("/api/v1/editor/"))
+            {
+                var result = await EditorRoutes.HandleRequest(method, url, body, this);
+                if (result != null) return result;
+            }
+
             // Status with game info
             if (method == "GET" && url == "/api/v1/status")
             {
