@@ -101,6 +101,10 @@ public static class Program
         EditorSettings.Initialize();
         Thread.CurrentThread.Name = "Main thread";
 
+        // Modulus: Start editor HTTP server for agent/tool integration
+        using var editorHttpServer = new Engine.HttpApi.EditorHttpServer(9876);
+        editorHttpServer.Start();
+
         // Install Metrics for the editor
         using (StrideGameStudio.MetricsClient = EditorSettings.EnableMetrics.GetValue() ? new MetricsClient(CommonApps.StrideEditorAppId) : null)
         {
