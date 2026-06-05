@@ -59,7 +59,6 @@ public static class Program
     private static RenderDocManager renderDocManager;
     private static readonly ConcurrentQueue<string> LogRingbuffer = new();
     private static bool enableThumbnailServices = true;
-    private static Engine.HttpApi.EditorHttpServer? editorHttpServer;
 
     // Startup checkpoints; shared file with the AutoTesting runner.
     private static readonly string DiagLogPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "gs-diag.log");
@@ -103,7 +102,8 @@ public static class Program
         Thread.CurrentThread.Name = "Main thread";
 
         // Modulus: Start editor HTTP server for agent/tool integration
-        editorHttpServer = new Engine.HttpApi.EditorHttpServer(9876);
+        using var editorHttpServer = new Engine.HttpApi.EditorHttpServer(9876);
+        editorHttpServer.SetRequestHandler(HttpApi.EditorApiHandler.HandleRequest);
         editorHttpServer.Start();
 
         // Install Metrics for the editor
@@ -288,8 +288,8 @@ public static class Program
                 var sessionLoaded = await editor.OpenInitialSession(initialSessionPath);
                 if (sessionLoaded == true)
                 {
-                    // Modulus: Update HTTP server with loaded project
-                    editorHttpServer?.SetCurrentProject(initialSessionPath);
+                    // Modulus: Update HTTP API with loaded project
+                    HttpApi.EditorApiHandler.SetCurrentProject(initialSessionPath);
                     var mainWindow = new GameStudioWindow(editor);
                     Application.Current.MainWindow = mainWindow;
                     WindowManager.ShowMainWindow(mainWindow);
