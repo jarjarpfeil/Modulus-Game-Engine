@@ -1,7 +1,9 @@
 // Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Silicon Studio Corp. (https://www.siliconstudio.co.jp)
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Reflection;
 using Stride.Core.Yaml.Serialization;
 
 namespace Stride.Core.Reflection;
@@ -69,6 +71,26 @@ public class TypeDescriptorFactory : ITypeDescriptorFactory
         }
 
         return descriptor;
+    }
+
+    /// <summary>
+    /// Removes all cached type descriptors for types defined in the given assembly.
+    /// Used by the modding system to prevent ALC reference leaks when unloading mods.
+    /// </summary>
+    public void ClearAssemblyCache(Assembly assembly)
+    {
+        ArgumentNullException.ThrowIfNull(assembly);
+        lock (registeredDescriptors)
+        {
+            var keysToRemove = new List<Type>();
+            foreach (var (type, _) in registeredDescriptors)
+            {
+                if (type.Assembly == assembly)
+                    keysToRemove.Add(type);
+            }
+            foreach (var key in keysToRemove)
+                registeredDescriptors.Remove(key);
+        }
     }
 
     /// <summary>

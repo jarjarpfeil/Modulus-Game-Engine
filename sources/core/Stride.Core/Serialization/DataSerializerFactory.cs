@@ -219,6 +219,51 @@ public static class DataSerializerFactory
         }
     }
 
+    /// <summary>
+    /// Clears all cached serializer data for types from the given assembly.
+    /// More aggressive than UnregisterSerializationAssembly — removes from AvailableAssemblySerializers cache entirely.
+    /// </summary>
+    public static void ClearAssemblySerializers(Assembly assembly)
+    {
+        ArgumentNullException.ThrowIfNull(assembly);
+
+        lock (Lock)
+        {
+            // Remove from available cache
+            AvailableAssemblySerializers.Remove(assembly);
+
+            // Remove from registered list and clean up aliases
+            var removed = AssemblySerializers.FirstOrDefault(x => x.Assembly == assembly);
+            if (removed != null)
+            {
+                AssemblySerializers.Remove(removed);
+            }
+            else
+            {
+                // Assembly wasn't registered — nothing to do
+                return;
+            }
+
+            // Clear all profiles and aliases, then rebuild from remaining assemblies
+            // (same approach as UnregisterSerializationAssembly)
+            DataSerializersPerProfile.Clear();
+            DataContractAliasMapping.Clear();
+
+            foreach (var assemblySerializer in AssemblySerializers)
+            {
+                RegisterSerializers(assemblySerializer);
+            }
+
+            ++Version;
+
+            foreach (var weakSelector in SerializerSelectors)
+            {
+                if (weakSelector.TryGetTarget(out var selector))
+                    selector.Invalidate();
+            }
+        }
+    }
+
     public static AssemblySerializers? GetAssemblySerializers(Assembly assembly)
     {
         lock (Lock)
