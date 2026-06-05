@@ -35,6 +35,7 @@ public class ModHost
     private readonly ModLifecycleManager _lifecycleManager;
     private readonly ModExceptionHandler _exceptionHandler;
     private readonly ModShaderManager _shaderManager;
+    private readonly OrphanComponentHandler _orphanHandler;
     private ModStateStore? _stateStore;
 
     /// <summary>Path to the mods/ directory. Defaults to "mods" relative to game content.</summary>
@@ -58,6 +59,9 @@ public class ModHost
     /// <summary>The shader manager for mod shader registration.</summary>
     public ModShaderManager ShaderManager => _shaderManager;
 
+    /// <summary>The orphan component handler for save-compatible mod uninstall.</summary>
+    public OrphanComponentHandler OrphanHandler => _orphanHandler;
+
     /// <summary>The state store for mod persistence, or null if not enabled.</summary>
     public ModStateStore? StateStore => _stateStore;
 
@@ -71,6 +75,7 @@ public class ModHost
         _lifecycleManager = new ModLifecycleManager(services);
         _exceptionHandler = new ModExceptionHandler();
         _shaderManager = new ModShaderManager();
+        _orphanHandler = new OrphanComponentHandler();
     }
 
     /// <summary>
@@ -195,6 +200,17 @@ public class ModHost
 
         // Register mod content for asset resolution
         _contentManager.RegisterModContent(package);
+
+        // Check for GUID collisions with other mods
+        var guidCollisions = _contentManager.CheckGuidCollisions(manifest.Id);
+        if (guidCollisions.Count > 0)
+        {
+            Log.Error($"[ModHost] GUID collision detected for mod '{manifest.Id}':");
+            foreach (var collision in guidCollisions)
+                Log.Error($"  {collision}");
+            throw new InvalidOperationException(
+                $"Mod '{manifest.Id}' has GUID collisions with existing mods. Loading aborted.");
+        }
 
         // Register mod shaders
         _shaderManager.RegisterModShaders(manifest.Id, manifest);

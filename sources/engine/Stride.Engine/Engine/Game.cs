@@ -12,6 +12,7 @@ using Stride.Core.IO;
 using Stride.Core.Mathematics;
 using Stride.Core.Storage;
 using Stride.Engine.Design;
+using Stride.Engine.Modding;
 using Stride.Engine.Processors;
 using Stride.Games;
 using Stride.Graphics;
@@ -84,6 +85,12 @@ namespace Stride.Engine
         /// </summary>
         /// <value>The effect system.</value>
         public EffectSystem EffectSystem { get; private set; }
+
+        /// <summary>
+        /// Gets the mod host for mod lifecycle management.
+        /// </summary>
+        /// <value>The mod host.</value>
+        public ModHost ModHost { get; private set; }
 
         /// <summary>
         /// Gets the streaming system.
@@ -404,6 +411,10 @@ namespace Stride.Engine
 
             // Add the VR System
             GameSystems.Add(VRDeviceSystem);
+
+            // Initialize the ModHost for mod lifecycle management
+            ModHost = new ModHost(Services);
+            ModHost.RegisterService();
 
             // TODO: data-driven?
             Content.Serializer.RegisterSerializer(new ImageSerializer());
