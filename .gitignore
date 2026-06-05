@@ -55,7 +55,9 @@ Cache/
 /doc/stride_doc_output/
 /build/Stride.version
 /build/Stride.*VC.db
-/tools
+# Stride tools (but not our Modulus tools)
+/tools/*
+!/tools/ModulusEngine.MCPServer/
 /externals/
 /sources/common/externals/
 /sources/tools/Stride.ShaderKeyGenerator/build/
