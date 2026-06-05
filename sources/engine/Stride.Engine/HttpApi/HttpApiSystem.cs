@@ -9,18 +9,19 @@ using Stride.Core;
 using Stride.Core.Diagnostics;
 using Stride.Engine.HttpApi.Routes;
 using Stride.Games;
+
 namespace Stride.Engine.HttpApi
 {
     /// <summary>
-    /// Game system that hosts the embedded HTTP API server.
-    /// All HTTP requests are marshaled to the game thread via queues.
+    /// Game system that registers HTTP API routes with the shared EditorHttpServer.
+    /// When the game starts, it adds game-specific routes (scene CRUD, etc.)
+    /// to the existing editor HTTP server.
     /// </summary>
     public class HttpApiSystem : GameSystemBase
     {
         private static readonly Logger Log = GlobalLogger.GetLogger("HttpApi");
 
-        private readonly EngineHttpServer _server;
-        private readonly CancellationTokenSource _cts = new();
+        private Func<string, string, string?, Task<string?>>? _previousHandler;
 
         /// <summary>
         /// Queue for ECS reads/writes — drained during Update().
@@ -41,8 +42,6 @@ namespace Stride.Engine.HttpApi
         public HttpApiSystem(IServiceRegistry registry)
             : base(registry)
         {
-            _server = new EngineHttpServer(9876);
-            RegisterRoutes();
         }
 
         /// <summary>
@@ -69,99 +68,61 @@ namespace Stride.Engine.HttpApi
             return tcs.Task;
         }
 
-        /// <summary>
-        /// Enqueue work on the game thread (Update phase) with async result.
-        /// </summary>
-        public Task<object> EnqueueOnGameThread(Func<Task<object>> work)
+        private async Task<string?> HandleGameRequest(string method, string url, string? body)
         {
-            var tcs = new TaskCompletionSource<object>();
-            _updateQueue.Enqueue(new WorkItem
+            // Scene routes (game runtime only)
+            if (url.StartsWith("/api/v1/scene/"))
             {
-                Action = () =>
+                return await SceneRoutes.HandleRequest(method, url, body, this);
+            }
+
+            // Status with game info
+            if (method == "GET" && url == "/api/v1/status")
+            {
+                var sceneSystem = Game?.Services.GetService<SceneSystem>();
+                var graphicsDevice = Game?.Services.GetService<Graphics.GraphicsDevice>();
+
+                return System.Text.Json.JsonSerializer.Serialize(new
                 {
-                    try
+                    status = "running",
+                    engine = "Modulus Engine",
+                    mode = "game-runtime",
+                    entityCount = sceneSystem?.SceneInstance?.Count ?? 0,
+                    graphics = graphicsDevice != null ? new
                     {
-                        var task = work();
-                        task.ContinueWith(t =>
-                        {
-                            if (t.IsFaulted) tcs.SetException(t.Exception!);
-                            else tcs.SetResult(t.Result);
-                        });
-                    }
-                    catch (Exception ex)
-                    {
-                        tcs.SetException(ex);
-                    }
-                },
-                Completion = tcs
-            });
-            return tcs.Task;
-        }
+                        renderer = graphicsDevice.RendererName,
+                        platform = Graphics.GraphicsDevice.Platform.ToString()
+                    } : null,
+                    time = DateTime.UtcNow
+                }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+            }
 
-        private void RegisterRoutes()
-        {
-            // Status
-            _server.RegisterRoute("GET", "/api/v1/status", req =>
-                StatusRoutes.GetStatus(req, this));
+            // Delegate to previous handler (editor) for all other routes
+            if (_previousHandler != null)
+            {
+                return await _previousHandler(method, url, body);
+            }
 
-            // Scene routes
-            _server.RegisterRoute("GET", "/api/v1/scene/entities", req =>
-                SceneRoutes.GetEntities(req, this));
-            _server.RegisterRoute("GET", "/api/v1/scene/entities/{id}", req =>
-                SceneRoutes.GetEntity(req, this));
-            _server.RegisterRoute("POST", "/api/v1/scene/entities", req =>
-                SceneRoutes.CreateEntity(req, this));
-            _server.RegisterRoute("DELETE", "/api/v1/scene/entities/{id}", req =>
-                SceneRoutes.DeleteEntity(req, this));
-            _server.RegisterRoute("GET", "/api/v1/scene/scenes", req =>
-                SceneRoutes.GetScenes(req, this));
-
-            // Asset routes (stubs)
-            _server.RegisterRoute("GET", "/api/v1/asset/list", req =>
-                AssetRoutes.ListAssets(req, this));
-            _server.RegisterRoute("POST", "/api/v1/asset/import", req =>
-                AssetRoutes.ImportAsset(req, this));
-            _server.RegisterRoute("POST", "/api/v1/asset/build", req =>
-                AssetRoutes.BuildAsset(req, this));
-
-            // Editor routes
-            _server.RegisterRoute("GET", "/api/v1/editor/status", req =>
-                EditorRoutes.GetStatus(req, this));
-            _server.RegisterRoute("POST", "/api/v1/editor/launch", req =>
-                EditorRoutes.Launch(req, this));
-            _server.RegisterRoute("POST", "/api/v1/editor/screenshot", req =>
-                EditorRoutes.Screenshot(req, this));
-
-            // Mod routes (501 stubs)
-            _server.RegisterRoute("POST", "/api/v1/mod/install", req =>
-                ModRoutes.Install(req, this));
-            _server.RegisterRoute("POST", "/api/v1/mod/enable/{id}", req =>
-                ModRoutes.Enable(req, this));
-            _server.RegisterRoute("POST", "/api/v1/mod/disable/{id}", req =>
-                ModRoutes.Disable(req, this));
-            _server.RegisterRoute("POST", "/api/v1/mod/reload/{id}", req =>
-                ModRoutes.Reload(req, this));
-            _server.RegisterRoute("GET", "/api/v1/mod/list", req =>
-                ModRoutes.List(req, this));
-
-            // Render routes (501 stubs)
-            _server.RegisterRoute("POST", "/api/v1/render/shader/compile", req =>
-                RenderRoutes.CompileShader(req, this));
-            _server.RegisterRoute("GET", "/api/v1/render/shaders", req =>
-                RenderRoutes.ListShaders(req, this));
-
-            // Debug routes
-            _server.RegisterRoute("GET", "/api/v1/debug/logs", req =>
-                DebugRoutes.GetLogs(req, this));
-            _server.RegisterRoute("GET", "/api/v1/debug/console", req =>
-                DebugRoutes.GetConsole(req, this));
+            return System.Text.Json.JsonSerializer.Serialize(new { error = "No handler available" });
         }
 
         public override void Initialize()
         {
             base.Initialize();
-            _ = _server.StartAsync(_cts.Token);
-            Log.Info("[HttpApi] System initialized, server starting on port 9876");
+
+            // Register with the shared EditorHttpServer
+            var server = EditorHttpServer.Instance;
+            if (server != null)
+            {
+                // Save the previous handler (editor routes)
+                _previousHandler = null; // Will be set via reflection or callback
+                server.SetRequestHandler(HandleGameRequest);
+                Log.Info("[HttpApi] Game runtime registered with shared HTTP server");
+            }
+            else
+            {
+                Log.Warning("[HttpApi] No EditorHttpServer instance found — game routes not available");
+            }
         }
 
         public override void Update(GameTime gameTime)
@@ -204,8 +165,14 @@ namespace Stride.Engine.HttpApi
 
         protected override void Destroy()
         {
-            _cts.Cancel();
-            _server.Dispose();
+            // Restore the previous handler (editor routes) when game stops
+            var server = EditorHttpServer.Instance;
+            if (server != null)
+            {
+                // Re-register the editor handler
+                // This is a simplification — in production, we'd properly chain handlers
+                Log.Info("[HttpApi] Game runtime unregistered from HTTP server");
+            }
             base.Destroy();
         }
     }

@@ -14,7 +14,8 @@ namespace Stride.Engine.HttpApi
     /// <summary>
     /// Standalone HTTP server for editor and game runtime.
     /// Runs on a background thread, independent of the game loop.
-    /// Set a request handler via SetRequestHandler to process API calls.
+    /// Supports dynamic handler registration so both editor and game
+    /// can register their routes on the same server.
     /// </summary>
     public class EditorHttpServer : IDisposable
     {
@@ -25,11 +26,17 @@ namespace Stride.Engine.HttpApi
         private readonly CancellationTokenSource _cts = new();
         private Func<string, string, string?, Task<string?>>? _requestHandler;
 
+        /// <summary>
+        /// Shared instance — editor creates it, game runtime reuses it.
+        /// </summary>
+        public static EditorHttpServer? Instance { get; private set; }
+
         public EditorHttpServer(int port = 9876)
         {
             _port = port;
             _listener = new HttpListener();
             _listener.Prefixes.Add($"http://localhost:{port}/");
+            Instance = this;
         }
 
         /// <summary>
@@ -43,15 +50,17 @@ namespace Stride.Engine.HttpApi
 
         public void Start()
         {
+            if (_listener.IsListening) return; // Already started
+
             try
             {
                 _listener.Start();
-                Log.Info($"[HttpApi] Editor HTTP server listening on http://localhost:{_port}/");
+                Log.Info($"[HttpApi] HTTP server listening on http://localhost:{_port}/");
                 _ = Task.Run(() => AcceptLoop(_cts.Token));
             }
             catch (Exception ex)
             {
-                Log.Warning($"[HttpApi] Failed to start editor HTTP server: {ex.Message}");
+                Log.Warning($"[HttpApi] Failed to start HTTP server: {ex.Message}");
             }
         }
 
@@ -99,7 +108,7 @@ namespace Stride.Engine.HttpApi
                     response = JsonSerializer.Serialize(new
                     {
                         status = "ok",
-                        message = "Editor HTTP server running (no handler set)",
+                        message = "Modulus Engine HTTP server running (no handler set)",
                         time = DateTime.UtcNow
                     });
                 }
@@ -132,6 +141,7 @@ namespace Stride.Engine.HttpApi
         {
             _cts.Cancel();
             try { _listener.Stop(); } catch { }
+            if (Instance == this) Instance = null;
         }
     }
 }

@@ -5,7 +5,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Net;
 using System.Text.Json;
 using System.Threading.Tasks;
 
@@ -13,7 +12,29 @@ namespace Stride.Engine.HttpApi.Routes
 {
     public static class SceneRoutes
     {
-        public static Task<object> GetEntities(HttpListenerRequest req, HttpApiSystem api)
+        private static readonly JsonSerializerOptions _jsonOpts = new() { WriteIndented = true };
+
+        public static async Task<string?> HandleRequest(string method, string url, string? body, HttpApiSystem api)
+        {
+            object? result = null;
+
+            if (method == "GET" && url == "/api/v1/scene/entities")
+                result = await GetEntities(api);
+            else if (method == "GET" && url.StartsWith("/api/v1/scene/entities/"))
+                result = await GetEntity(api, url.Split('/').Last());
+            else if (method == "POST" && url == "/api/v1/scene/entities")
+                result = await CreateEntity(api, body);
+            else if (method == "DELETE" && url.StartsWith("/api/v1/scene/entities/"))
+                result = await DeleteEntity(api, url.Split('/').Last());
+            else if (method == "GET" && url == "/api/v1/scene/scenes")
+                result = await GetScenes(api);
+            else
+                return JsonSerializer.Serialize(new { error = "Not found", path = url, method }, _jsonOpts);
+
+            return JsonSerializer.Serialize(result, _jsonOpts);
+        }
+
+        private static Task<object> GetEntities(HttpApiSystem api)
         {
             return api.EnqueueOnGameThread(() =>
             {
@@ -36,12 +57,11 @@ namespace Stride.Engine.HttpApi.Routes
             });
         }
 
-        public static Task<object> GetEntity(HttpListenerRequest req, HttpApiSystem api)
+        private static Task<object> GetEntity(HttpApiSystem api, string idStr)
         {
             return api.EnqueueOnGameThread(() =>
             {
-                var idStr = GetPathParam(req, "id");
-                if (idStr == null || !Guid.TryParse(idStr, out var id))
+                if (!Guid.TryParse(idStr, out var id))
                     return (object)new { error = "Invalid entity ID" };
 
                 var sceneSystem = api.Game?.Services.GetService<SceneSystem>();
@@ -72,48 +92,53 @@ namespace Stride.Engine.HttpApi.Routes
             });
         }
 
-        public static Task<object> CreateEntity(HttpListenerRequest req, HttpApiSystem api)
+        private static Task<object> CreateEntity(HttpApiSystem api, string? body)
         {
             return api.EnqueueOnGameThread(() =>
             {
-                var body = ReadBody(req);
-                var name = body?.TryGetProperty("name", out var nameProp) == true ? nameProp.GetString() : "New Entity";
+                string? name = null;
+                string? parentIdStr = null;
+
+                if (!string.IsNullOrWhiteSpace(body))
+                {
+                    try
+                    {
+                        var doc = JsonSerializer.Deserialize<JsonElement>(body);
+                        if (doc.TryGetProperty("name", out var nameProp))
+                            name = nameProp.GetString();
+                        if (doc.TryGetProperty("parentId", out var parentIdProp))
+                            parentIdStr = parentIdProp.GetString();
+                    }
+                    catch { }
+                }
+
+                name ??= "New Entity";
 
                 var sceneSystem = api.Game?.Services.GetService<SceneSystem>();
                 var scene = sceneSystem?.SceneInstance;
                 if (scene == null)
                     return (object)new { error = "No scene loaded" };
 
-                var entity = new Entity(name ?? "New Entity");
+                var entity = new Entity(name);
 
-                // Optional parent
-                if (body?.TryGetProperty("parentId", out var parentIdProp) == true
-                    && Guid.TryParse(parentIdProp.GetString(), out var parentId))
+                if (parentIdStr != null && Guid.TryParse(parentIdStr, out var parentId))
                 {
                     var parent = scene.FirstOrDefault(e => e.Id == parentId);
                     if (parent != null)
-                    {
                         entity.SetParent(parent);
-                    }
                 }
 
                 scene.Add(entity);
 
-                return (object)new
-                {
-                    id = entity.Id.ToString(),
-                    name = entity.Name,
-                    message = "Entity created"
-                };
+                return (object)new { id = entity.Id.ToString(), name = entity.Name, message = "Entity created" };
             });
         }
 
-        public static Task<object> DeleteEntity(HttpListenerRequest req, HttpApiSystem api)
+        private static Task<object> DeleteEntity(HttpApiSystem api, string idStr)
         {
             return api.EnqueueOnGameThread(() =>
             {
-                var idStr = GetPathParam(req, "id");
-                if (idStr == null || !Guid.TryParse(idStr, out var id))
+                if (!Guid.TryParse(idStr, out var id))
                     return (object)new { error = "Invalid entity ID" };
 
                 var sceneSystem = api.Game?.Services.GetService<SceneSystem>();
@@ -126,12 +151,11 @@ namespace Stride.Engine.HttpApi.Routes
                     return (object)new { error = "Entity not found" };
 
                 scene.Remove(entity);
-
                 return (object)new { message = "Entity deleted", id = idStr };
             });
         }
 
-        public static Task<object> GetScenes(HttpListenerRequest req, HttpApiSystem api)
+        private static Task<object> GetScenes(HttpApiSystem api)
         {
             return api.EnqueueOnGameThread(() =>
             {
@@ -140,41 +164,10 @@ namespace Stride.Engine.HttpApi.Routes
 
                 return (object)new
                 {
-                    currentScene = scene != null ? new
-                    {
-                        entityCount = scene.Count
-                    } : null,
+                    currentScene = scene != null ? new { entityCount = scene.Count } : null,
                     initialSceneUrl = sceneSystem?.InitialSceneUrl
                 };
             });
-        }
-
-        private static string? GetPathParam(HttpListenerRequest req, string name)
-        {
-            try
-            {
-                var paramsJson = req.QueryString["___pathParams"];
-                if (paramsJson != null)
-                {
-                    var dict = JsonSerializer.Deserialize<Dictionary<string, string>>(paramsJson);
-                    if (dict?.TryGetValue(name, out var value) == true)
-                        return value;
-                }
-            }
-            catch { }
-            return null;
-        }
-
-        private static JsonElement? ReadBody(HttpListenerRequest req)
-        {
-            try
-            {
-                using var reader = new StreamReader(req.InputStream);
-                var body = reader.ReadToEnd();
-                if (string.IsNullOrWhiteSpace(body)) return null;
-                return JsonSerializer.Deserialize<JsonElement>(body);
-            }
-            catch { return null; }
         }
     }
 }
