@@ -119,6 +119,11 @@ namespace Stride.Engine
         public VRDeviceSystem VRDeviceSystem { get; }
 
         /// <summary>
+        /// Gets the HTTP API system (Modulus).
+        /// </summary>
+        public HttpApi.HttpApiSystem HttpApi { get; }
+
+        /// <summary>
         /// Gets the font system.
         /// </summary>
         /// <value>The font system.</value>
@@ -225,6 +230,10 @@ namespace Stride.Engine
 
             VRDeviceSystem = new VRDeviceSystem(Services);
             Services.AddService(VRDeviceSystem);
+
+            // Modulus: HTTP API server for agent/tool integration
+            HttpApi = new HttpApi.HttpApiSystem(Services);
+            Services.AddService(HttpApi);
 
             // Creates the graphics device manager
             GraphicsDeviceManager = new GraphicsDeviceManager(this);
