@@ -1,4 +1,4 @@
-// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org & https://stride3d.net) and Silicon Studio Corp. (https://www.siliconstudio.co.jp)
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org & https://stride3d.net) and Silicon Studio Corp. (https://siliconstudio.co.jp)
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 using System;
@@ -17,7 +17,9 @@ namespace Stride.Engine.Modding;
 /// and provides the shared assembly resolution map for cross-ALC type identity.
 ///
 /// Integrates ModContentManager for asset resolution, ModEventBus for inter-mod
-/// communication, and properly calls IMod lifecycle methods.
+/// communication, ModLifecycleManager for ALC cleanup, ModExceptionHandler for
+/// crash safety, ModShaderManager for shader extraction, and ModStateStore for
+/// state persistence.
 /// </summary>
 public class ModHost
 {
@@ -30,6 +32,10 @@ public class ModHost
     private readonly ModSystemRegistry _systemRegistry;
     private readonly ModEventBus _eventBus;
     private readonly ModContentManager _contentManager;
+    private readonly ModLifecycleManager _lifecycleManager;
+    private readonly ModExceptionHandler _exceptionHandler;
+    private readonly ModShaderManager _shaderManager;
+    private ModStateStore? _stateStore;
 
     /// <summary>Path to the mods/ directory. Defaults to "mods" relative to game content.</summary>
     public string ModsDirectory { get; set; } = "mods";
@@ -43,6 +49,18 @@ public class ModHost
     /// <summary>The content manager for multi-source asset resolution.</summary>
     public ModContentManager ContentManager => _contentManager;
 
+    /// <summary>The lifecycle manager for mod resource tracking and cleanup.</summary>
+    public ModLifecycleManager LifecycleManager => _lifecycleManager;
+
+    /// <summary>The exception handler for crash-safe mod execution.</summary>
+    public ModExceptionHandler ExceptionHandler => _exceptionHandler;
+
+    /// <summary>The shader manager for mod shader registration.</summary>
+    public ModShaderManager ShaderManager => _shaderManager;
+
+    /// <summary>The state store for mod persistence, or null if not enabled.</summary>
+    public ModStateStore? StateStore => _stateStore;
+
     public ModHost(IServiceRegistry services)
     {
         _services = services ?? throw new ArgumentNullException(nameof(services));
@@ -50,6 +68,9 @@ public class ModHost
         _systemRegistry = new ModSystemRegistry(services);
         _eventBus = new ModEventBus();
         _contentManager = new ModContentManager(services);
+        _lifecycleManager = new ModLifecycleManager(services);
+        _exceptionHandler = new ModExceptionHandler();
+        _shaderManager = new ModShaderManager();
     }
 
     /// <summary>
@@ -59,6 +80,21 @@ public class ModHost
     {
         _services.AddService(this);
         Log.Info("[ModHost] Registered as engine service");
+    }
+
+    /// <summary>
+    /// Enables mod state persistence. Call once during engine initialization.
+    /// </summary>
+    /// <param name="baseDirectory">
+    /// Base directory for state storage. Defaults to %APPDATA%/ModulusEngine.
+    /// </param>
+    public void EnableStatePersistence(string? baseDirectory = null)
+    {
+        baseDirectory ??= Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "ModulusEngine");
+        _stateStore = new ModStateStore(baseDirectory);
+        Log.Info($"[ModHost] State persistence enabled: {baseDirectory}");
     }
 
     // ──────────────────────────────────────────────
@@ -99,7 +135,9 @@ public class ModHost
     /// 3. Register types with serializer/AssemblyRegistry
     /// 4. Register systems with ECS
     /// 5. Register mod content with ModContentManager
-    /// 6. Instantiate and call IMod.Initialize()
+    /// 6. Register mod shaders with ModShaderManager
+    /// 7. Instantiate and call IMod.Initialize() (crash-safe)
+    /// 8. Restore saved state if available
     /// </summary>
     public ModPackage LoadMod(string modDirectory)
     {
@@ -158,7 +196,10 @@ public class ModHost
         // Register mod content for asset resolution
         _contentManager.RegisterModContent(package);
 
-        // Load and initialize the entry point (IMod)
+        // Register mod shaders
+        _shaderManager.RegisterModShaders(manifest.Id, manifest);
+
+        // Load and initialize the entry point (IMod) — crash-safe via ModExceptionHandler
         if (manifest.EntryPoint != null && package.ModAssembly != null)
         {
             var entryType = package.ModAssembly.GetType(manifest.EntryPoint);
@@ -169,14 +210,43 @@ public class ModHost
                     var instance = Activator.CreateInstance(entryType);
                     package.ModInstance = instance;
 
-                    // If it implements IMod, call Initialize + OnEnabled
+                    // If it implements IMod, call Initialize + OnEnabled (crash-safe)
                     if (instance is IMod mod)
                     {
                         var logger = GlobalLogger.GetLogger($"Mod.{manifest.Id}");
                         var context = new ModContext(_services, logger, _eventBus, modDirectory);
-                        mod.Initialize(context);
-                        mod.OnEnabled();
+
+                        _exceptionHandler.ExecuteModInitialize(manifest.Id, () =>
+                        {
+                            mod.Initialize(context);
+                            mod.OnEnabled();
+                        });
+
+                        // Restore saved state if available
+                        if (_stateStore != null && mod is IModSerializable serializable && _stateStore.HasState(manifest.Id))
+                        {
+                            try
+                            {
+                                var saved = _stateStore.LoadState(manifest.Id);
+                                if (saved != null)
+                                {
+                                    serializable.Load(saved.Data, saved.Version);
+                                    Log.Info($"[ModHost] Restored state for mod '{manifest.Id}' (saved by v{saved.Version})");
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                Log.Warning($"[ModHost] Failed to restore state for mod '{manifest.Id}': {ex.Message}");
+                            }
+                        }
                     }
+                }
+                catch (InvalidOperationException ex) when (ex.Message.Contains("initialization failed"))
+                {
+                    // ModExceptionHandler.ExecuteModInitialize wraps the exception
+                    Log.Error($"[ModHost] {ex.Message}");
+                    package.State = ModState.Errored;
+                    package.ErrorReason = ex.Message;
                 }
                 catch (Exception ex)
                 {
@@ -231,8 +301,8 @@ public class ModHost
     // ──────────────────────────────────────────────
 
     /// <summary>
-    /// Unloads a mod: calls IMod.OnDisabled(), unsubscribes events, unregisters
-    /// types/systems/content, unloads ALC, and forces GC.
+    /// Unloads a mod: full 17-step cleanup via ModLifecycleManager.
+    /// Saves state if the mod implements IModSerializable.
     /// </summary>
     public void UnloadMod(string modId)
     {
@@ -241,42 +311,43 @@ public class ModHost
 
         Log.Info($"[ModHost] Unloading mod: {modId}");
 
-        // Call IMod.OnDisabled() if available
-        if (package.ModInstance is IMod mod)
+        // Save mod state if available
+        if (_stateStore != null && package.ModInstance is IModSerializable serializable)
         {
-            try { mod.OnDisabled(); }
-            catch (Exception ex) { Log.Warning($"[ModHost] OnDisabled() failed for '{modId}': {ex.Message}"); }
+            try
+            {
+                var stateData = serializable.Save();
+                _stateStore.SaveState(modId, stateData, System.Version.Parse(package.Manifest.Version));
+                Log.Info($"[ModHost] Saved state for mod '{modId}'");
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"[ModHost] Failed to save state for mod '{modId}': {ex.Message}");
+            }
         }
 
-        // Unsubscribe all event handlers from this mod
+        // Call IMod.OnDisabled() — crash-safe
+        if (package.ModInstance is IMod mod)
+        {
+            _exceptionHandler.ExecuteModCode(modId, () => mod.OnDisabled(), onDisable: () => { });
+        }
+
+        // Unsubscribe all event handlers
         _eventBus.UnsubscribeAll(modId);
+
+        // Unregister mod shaders
+        _shaderManager.UnregisterModShaders(modId);
 
         // Unregister mod content
         _contentManager.UnregisterModContent(package);
 
-        // Unregister systems first
-        _systemRegistry.UnregisterModSystems(package);
+        // Perform full 17-step cleanup via lifecycle manager
+        var alcWeakRef = _lifecycleManager.PerformFullCleanup(modId, package.ModAssembly, package);
 
-        // Unregister types
-        if (package.ModAssembly != null)
-            _typeRegistry.UnregisterModAssembly(package.ModAssembly);
-
-        // Remove from shared assembly map
-        if (package.ModAssembly != null)
+        // Verify ALC was collected (diagnostic)
+        if (!ModLifecycleManager.VerifyAlcCollected(alcWeakRef))
         {
-            var name = package.ModAssembly.GetName().Name;
-            if (name != null)
-                _sharedAssemblies.Remove(name);
-        }
-
-        // Unload ALC
-        package.UnloadAssemblies();
-
-        // Force GC (plan says 2 cycles for reliable ALC collection)
-        for (int i = 0; i < 2; i++)
-        {
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
+            Log.Warning($"[ModHost] ALC for mod '{modId}' was NOT collected — possible reference leak!");
         }
 
         _loadedMods.Remove(modId);
@@ -308,16 +379,14 @@ public class ModHost
             _systemRegistry.RegisterModSystems(package);
         }
 
-        // Call IMod.OnEnabled()
+        // Call IMod.OnEnabled() — crash-safe
         if (package.ModInstance is IMod mod)
         {
-            try { mod.OnEnabled(); }
-            catch (Exception ex)
+            _exceptionHandler.ExecuteModCode(modId, () => mod.OnEnabled(), onDisable: () =>
             {
-                Log.Error($"[ModHost] OnEnabled() failed for '{modId}': {ex.Message}");
                 package.State = ModState.Errored;
-                package.ErrorReason = $"OnEnabled failed: {ex.Message}";
-            }
+                package.ErrorReason = "OnEnabled failed";
+            });
         }
 
         Log.Info($"[ModHost] Enabled mod: {modId}");
@@ -334,11 +403,10 @@ public class ModHost
         if (package.State != ModState.Loaded)
             return; // Already disabled
 
-        // Call IMod.OnDisabled()
+        // Call IMod.OnDisabled() — crash-safe
         if (package.ModInstance is IMod mod)
         {
-            try { mod.OnDisabled(); }
-            catch (Exception ex) { Log.Warning($"[ModHost] OnDisabled() failed for '{modId}': {ex.Message}"); }
+            _exceptionHandler.ExecuteModCode(modId, () => mod.OnDisabled(), onDisable: () => { });
         }
 
         package.State = ModState.Disabled;
