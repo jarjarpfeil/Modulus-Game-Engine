@@ -6,17 +6,6 @@ using System.IO;
 
 namespace Stride.Engine.Modding;
 
-/// <summary>
-/// Interface for mod state persistence. Mods implement this to define
-/// save/load behavior. State is stored per-mod in a standard location.
-/// Storage: %APPDATA%/ModulusEngine/mod-states/{modId}/state.dat
-/// </summary>
-public interface IModSerializable
-{
-    byte[] Save();
-    void Load(byte[] data, Version savedVersion);
-}
-
 /// <summary>Result of loading mod state from disk.</summary>
 public sealed class ModStateData
 {

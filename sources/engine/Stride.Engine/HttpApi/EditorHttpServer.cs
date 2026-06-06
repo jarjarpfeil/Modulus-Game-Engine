@@ -2,6 +2,7 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Text.Json;
@@ -25,6 +26,12 @@ namespace Stride.Engine.HttpApi
         private readonly int _port;
         private readonly CancellationTokenSource _cts = new();
         private Func<string, string, string?, Task<string?>>? _requestHandler;
+        
+        // Rate limiting: max concurrent requests and per-IP tracking
+        private readonly SemaphoreSlim _concurrentRequestLimit = new(initialCount: 20, maxCount: 20);
+        private readonly Dictionary<string, Queue<DateTime>> _requestTimestamps = new();
+        private readonly object _rateLimitLock = new();
+        private const int MaxRequestsPerSecond = 50;
 
         /// <summary>
         /// Shared instance — editor creates it, game runtime reuses it.
@@ -46,6 +53,14 @@ namespace Stride.Engine.HttpApi
         public void SetRequestHandler(Func<string, string, string?, Task<string?>> handler)
         {
             _requestHandler = handler;
+        }
+
+        /// <summary>
+        /// Gets the current request handler (for saving/restoring when game starts/stops).
+        /// </summary>
+        public Func<string, string, string?, Task<string?>>? GetRequestHandler()
+        {
+            return _requestHandler;
         }
 
         public void Start()
@@ -88,7 +103,32 @@ namespace Stride.Engine.HttpApi
         {
             var method = ctx.Request.HttpMethod;
             var url = ctx.Request.Url!.AbsolutePath;
+            var clientIp = ctx.Request.RemoteEndPoint?.Address?.ToString() ?? "unknown";
             string? body = null;
+
+            // Rate limiting check
+            if (!IsRequestAllowed(clientIp))
+            {
+                ctx.Response.StatusCode = 429; // Too Many Requests
+                var rateLimitJson = JsonSerializer.Serialize(new { error = "Rate limit exceeded", retryAfterMs = 1000 });
+                ctx.Response.ContentType = "application/json";
+                using var writer = new StreamWriter(ctx.Response.OutputStream);
+                writer.Write(rateLimitJson);
+                try { ctx.Response.Close(); } catch { }
+                return;
+            }
+
+            // Semaphore to limit concurrent requests
+            if (!await _concurrentRequestLimit.WaitAsync(TimeSpan.FromSeconds(5)))
+            {
+                ctx.Response.StatusCode = 503; // Service Unavailable
+                var busyJson = JsonSerializer.Serialize(new { error = "Server busy, try again later" });
+                ctx.Response.ContentType = "application/json";
+                using var writer = new StreamWriter(ctx.Response.OutputStream);
+                writer.Write(busyJson);
+                try { ctx.Response.Close(); } catch { }
+                return;
+            }
 
             try
             {
@@ -133,7 +173,36 @@ namespace Stride.Engine.HttpApi
             }
             finally
             {
+                _concurrentRequestLimit.Release();
                 try { ctx.Response.Close(); } catch { }
+            }
+        }
+
+        /// <summary>
+        /// Checks if a request from the given IP is allowed (not exceeding rate limits).
+        /// </summary>
+        private bool IsRequestAllowed(string clientIp)
+        {
+            lock (_rateLimitLock)
+            {
+                var now = DateTime.UtcNow;
+                
+                if (!_requestTimestamps.TryGetValue(clientIp, out var timestamps))
+                {
+                    timestamps = new Queue<DateTime>();
+                    _requestTimestamps[clientIp] = timestamps;
+                }
+                
+                // Remove timestamps older than 1 second
+                while (timestamps.Count > 0 && (now - timestamps.Peek()).TotalSeconds > 1.0)
+                    timestamps.Dequeue();
+                
+                // Check if under limit
+                if (timestamps.Count >= MaxRequestsPerSecond)
+                    return false;
+                
+                timestamps.Enqueue(now);
+                return true;
             }
         }
 

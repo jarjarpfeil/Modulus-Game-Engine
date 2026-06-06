@@ -61,6 +61,11 @@ namespace Stride.GameStudio.ViewModels
         public bool BuildLogPanelVisible { get; set { SetValue(ref field, value, GameStudioInternalSettings.BuildLogPanelVisible); } } = true;
 
         /// <summary>
+        /// Gets or sets whether the Mod Manager panel is visible.
+        /// </summary>
+        public bool ModManagerPanelVisible { get; set { SetValue(ref field, value, GameStudioInternalSettings.ModManagerPanelVisible); } } = true;
+
+        /// <summary>
         /// Loads the visible/hidden status of each panel from the settings.
         /// </summary>
         public void LoadFromSettings()
@@ -73,6 +78,7 @@ namespace Stride.GameStudio.ViewModels
             ActionHistoryPanelVisible = GameStudioInternalSettings.ActionHistoryPanelVisible.GetValue();
             AssetLogPanelVisible = GameStudioInternalSettings.AssetLogPanelVisible.GetValue();
             BuildLogPanelVisible = GameStudioInternalSettings.BuildLogPanelVisible.GetValue();
+            ModManagerPanelVisible = GameStudioInternalSettings.ModManagerPanelVisible.GetValue();
         }
 
         /// <summary>
@@ -88,6 +94,7 @@ namespace Stride.GameStudio.ViewModels
             ActionHistoryPanelVisible = true;
             AssetLogPanelVisible = true;
             BuildLogPanelVisible = true;
+            ModManagerPanelVisible = true;
         }
 
         private void SetValue(ref bool field, bool value, SettingsKey<bool> settingsKey, [CallerMemberName] string propertyName = null)

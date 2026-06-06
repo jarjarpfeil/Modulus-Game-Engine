@@ -3,6 +3,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
 
 namespace Stride.Engine.Modding;
@@ -17,6 +19,8 @@ public static class ModValidator
     private static readonly Regex SemverRegex = new(@"^\d+\.\d+\.?\d*(-[a-zA-Z0-9.]+)?(\+[a-zA-Z0-9.]+)?$", RegexOptions.Compiled);
     private static readonly Regex SemverRegexStrict = new(@"^\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?(\+[a-zA-Z0-9.]+)?$", RegexOptions.Compiled);
     private static readonly string[] ValidTypes = { "standard", "patch", "data" };
+    private static readonly string[] NativeDllExtensions = { ".dll", ".so", ".dylib" };
+    private static readonly string[] ManagedDllWhitelist = { ".dll" }; // .dll can be managed OR native
 
     /// <summary>
     /// Validates a mod manifest. Returns a list of validation errors (empty = valid).
@@ -53,6 +57,10 @@ public static class ModValidator
         else if (Array.IndexOf(ValidTypes, manifest.Type) < 0)
             errors.Add($"mod.json 'type' must be one of [{string.Join(", ", ValidTypes)}], got: '{manifest.Type}'");
 
+        // patch mods require dependencies pointing to the target mod
+        if (manifest.Type == "patch" && (manifest.Dependencies == null || manifest.Dependencies.Count == 0))
+            errors.Add("mod.json 'type' is 'patch' but no dependencies declared — patch mods require dependencies pointing to the target mod.");
+
         // dependencies: each dep must have id and minVersion
         if (manifest.Dependencies != null)
         {
@@ -65,6 +73,27 @@ public static class ModValidator
             }
         }
 
+        return errors;
+    }
+
+    /// <summary>
+    /// Validates that a mod directory doesn't contain native DLLs (.so, .dylib, or non-managed .dll).
+    /// This enforces the security rule: mods are managed C# only.
+    /// </summary>
+    public static List<string> ValidateNoNativeDlls(string modDirectory)
+    {
+        var errors = new List<string>();
+        
+        // Check for explicitly native extensions
+        foreach (var ext in new[] { ".so", ".dylib" })
+        {
+            var nativeFiles = Directory.GetFiles(modDirectory, $"*{ext}", SearchOption.AllDirectories);
+            if (nativeFiles.Length > 0)
+            {
+                errors.Add($"Mods cannot contain native libraries ({ext}): {string.Join(", ", nativeFiles.Select(Path.GetFileName))}");
+            }
+        }
+        
         return errors;
     }
 }

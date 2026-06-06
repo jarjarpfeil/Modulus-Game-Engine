@@ -14,6 +14,7 @@
         xmlns:cmd="clr-namespace:Stride.Core.Presentation.Commands;assembly=Stride.Core.Presentation"
         xmlns:viewModels="clr-namespace:Stride.Core.Presentation.Quantum.ViewModels;assembly=Stride.Core.Presentation.Quantum"
         xmlns:viewModels1="clr-namespace:Stride.Core.Assets.Editor.Components.TemplateDescriptions.ViewModels;assembly=Stride.Core.Assets.Editor"
+        xmlns:mod="clr-namespace:Stride.Modding.Editor;assembly=Stride.Modding.Editor"
         mc:Ignorable="d" d:DesignHeight="300" d:DesignWidth="300"
         Title="{Binding EditorTitle, RelativeSource={RelativeSource Self}}" Width="1280" Height="900" Style="{DynamicResource WindowChromeStyle}"
         PreviewMouseDown="EditorWindowPreviewMouseDown"
@@ -276,6 +277,9 @@
         <Separator/>
         <MenuItem Header="{sd:Localize Asset errors, Context=Menu}" IsCheckable="True" IsChecked="{Binding Panels.AssetLogPanelVisible, Mode=TwoWay}"/>
         <MenuItem Header="{sd:Localize Output, Context=Menu}" IsCheckable="True" IsChecked="{Binding Panels.BuildLogPanelVisible, Mode=TwoWay}"/>
+
+        <Separator/>
+        <MenuItem Header="Mod Manager" IsCheckable="True" IsChecked="{Binding Panels.ModManagerPanelVisible, Mode=TwoWay}"/>
 
       </MenuItem>
       <!-- Help Menu -->
@@ -679,6 +683,35 @@
                     <gl:LayoutAnchorableActivateOnLogBehavior MinimumLevel="Error" Collection="{Binding Debugging.ProjectLog.Messages, Source={x:Static vm:GameStudioViewModel.GameStudio}}"/>
                     <gl:LayoutAnchorableActivateOnLogBehavior MinimumLevel="Error" Collection="{Binding Debugging.LiveScriptingLog.Messages, Source={x:Static vm:GameStudioViewModel.GameStudio}}"/>
                   </i:Interaction.Behaviors>
+                </xcad:LayoutAnchorable>
+                <!-- MOD MANAGER -->
+                <xcad:LayoutAnchorable AutoHideMinHeight="200" ContentId="ModManager" Title="Mod Manager"
+                                       gh:AvalonDockHelper.IsVisible="{Binding Panels.ModManagerPanelVisible, Mode=TwoWay,
+                                       Source={x:Static vm:GameStudioViewModel.GameStudio}, FallbackValue={sd:True}}">
+                  <ContentControl Content="{Binding ModManager, Source={x:Static vm:GameStudioViewModel.GameStudio}, FallbackValue={x:Null}}">
+                    <ContentControl.ContentTemplate>
+                      <DataTemplate>
+                        <mod:ModManagerView/>
+                      </DataTemplate>
+                    </ContentControl.ContentTemplate>
+                    <ContentControl.Style>
+                      <Style TargetType="ContentControl">
+                        <Style.Triggers>
+                          <DataTrigger Binding="{Binding ModManager, Source={x:Static vm:GameStudioViewModel.GameStudio}, FallbackValue={x:Null}}" Value="{x:Null}">
+                            <Setter Property="ContentTemplate">
+                              <Setter.Value>
+                                <DataTemplate>
+                                  <TextBlock Text="No session loaded. Open a project to manage mods."
+                                             HorizontalAlignment="Center" VerticalAlignment="Center"
+                                             Foreground="Gray" Margin="20"/>
+                                </DataTemplate>
+                              </Setter.Value>
+                            </Setter>
+                          </DataTrigger>
+                        </Style.Triggers>
+                      </Style>
+                    </ContentControl.Style>
+                  </ContentControl>
                 </xcad:LayoutAnchorable>
               </xcad:LayoutAnchorablePane>
             </xcad:LayoutPanel>

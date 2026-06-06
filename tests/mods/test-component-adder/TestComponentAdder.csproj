@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>TestComponentAdder</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <!-- Test mod: build as a simple class library -->
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Reference the stable ABI -->
+    <ProjectReference Include="..\..\..\sources\engine\Modulus.Modding.Api\Modulus.Modding.Api.csproj" />
+    <!-- Reference Stride.Engine for EntityComponent/EntityProcessor -->
+    <ProjectReference Include="..\..\..\sources\engine\Stride.Engine\Stride.Engine.csproj" />
+  </ItemGroup>
+</Project>

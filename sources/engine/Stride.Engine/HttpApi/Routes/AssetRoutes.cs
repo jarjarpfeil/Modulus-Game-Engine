@@ -28,6 +28,11 @@ namespace Stride.Engine.HttpApi.Routes
             ".sdsheet", ".sdfnt", ".sdgamesettings", ".sdgfxcomp", ".sdpkg",
             ".sdsprite", ".sdsl", ".sdbundle"
         };
+        
+        // Cached content directory
+        private static string? _cachedContentDir;
+        private static DateTime _contentDirCacheTime;
+        private static readonly TimeSpan ContentDirCacheDuration = TimeSpan.FromSeconds(10);
 
         /// <summary>
         /// Dispatches asset route requests.
@@ -120,17 +125,42 @@ namespace Stride.Engine.HttpApi.Routes
                 if (sourcePath == null || !File.Exists(sourcePath))
                     return JsonSerializer.Serialize(new { error = $"Source file not found: {sourcePath}" });
 
+                // Security: Validate source path doesn't escape allowed directories
+                var fullPath = Path.GetFullPath(sourcePath);
+                if (fullPath.Contains("..") || !File.Exists(fullPath))
+                    return JsonSerializer.Serialize(new { error = "Invalid source path" });
+
                 var contentDir = GetContentDirectory(game);
                 if (contentDir == null)
                     return JsonSerializer.Serialize(new { error = "Content directory not found" });
 
                 string targetPath;
                 if (root.TryGetProperty("targetPath", out var tgtProp) && tgtProp.GetString() != null)
-                    targetPath = Path.Combine(contentDir, tgtProp.GetString()!);
+                {
+                    var requestedTarget = tgtProp.GetString()!;
+                    // Security: Prevent path traversal in target path
+                    if (requestedTarget.Contains("..") || Path.IsPathRooted(requestedTarget))
+                        return JsonSerializer.Serialize(new { error = "Invalid target path — must be relative and cannot contain '..'" });
+                    targetPath = Path.Combine(contentDir, requestedTarget);
+                }
                 else
                     targetPath = Path.Combine(contentDir, Path.GetFileName(sourcePath));
 
+                // Security: Final verification that target is within content directory
+                var targetFull = Path.GetFullPath(targetPath);
+                if (!targetFull.StartsWith(Path.GetFullPath(contentDir), StringComparison.OrdinalIgnoreCase))
+                    return JsonSerializer.Serialize(new { error = "Target path escapes content directory" });
+
                 Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+                
+                // Create backup before overwriting
+                if (File.Exists(targetPath))
+                {
+                    var backupPath = targetPath + ".bak";
+                    File.Copy(targetPath, backupPath, overwrite: true);
+                    Log.Info($"[AssetRoutes] Backed up existing file to: {backupPath}");
+                }
+                
                 File.Copy(sourcePath, targetPath, overwrite: true);
 
                 return JsonSerializer.Serialize(new
@@ -224,14 +254,24 @@ namespace Stride.Engine.HttpApi.Routes
 
         private static string? GetContentDirectory(GameBase game)
         {
+            // Check cache first
+            if (_cachedContentDir != null && (DateTime.UtcNow - _contentDirCacheTime) < ContentDirCacheDuration)
+                return Directory.Exists(_cachedContentDir) ? _cachedContentDir : null;
+            
             var gameDir = Environment.CurrentDirectory;
             var candidates = new[] { "content", "Content", "assets", "Assets" };
             foreach (var c in candidates)
             {
                 var path = Path.Combine(gameDir, c);
                 if (Directory.Exists(path))
+                {
+                    _cachedContentDir = path;
+                    _contentDirCacheTime = DateTime.UtcNow;
                     return path;
+                }
             }
+            
+            _cachedContentDir = null;
             return null;
         }
     }

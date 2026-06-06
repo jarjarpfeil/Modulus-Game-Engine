@@ -1,3 +1,6 @@
 <Project>
   <Import Project="..\sources\Directory.Packages.props" />
+  <ItemGroup>
+    <PackageVersion Include="Stride.UI" Version="4.3.0.2503" />
+  </ItemGroup>
 </Project>

@@ -7,6 +7,7 @@ using System.Linq;
 using System.Reflection;
 using Stride.Core;
 using Stride.Core.Diagnostics;
+using Stride.Engine.Design;
 
 namespace Stride.Engine.Modding;
 
@@ -48,9 +49,14 @@ public class ModSystemRegistry
         try
         {
             // Discover EntityProcessor subclasses in the mod assembly
+            // SKIP processors that are auto-created via [DefaultEntityComponentProcessor] attribute
+            // Those are registered automatically when the component type is added to an entity
+            var autoCreatedProcessors = GetAutoCreatedProcessorTypes(package.ModAssembly);
+            
             var processorTypes = package.ModAssembly.GetTypes()
                 .Where(t => typeof(EntityProcessor).IsAssignableFrom(t)
                             && !t.IsAbstract
+                            && !autoCreatedProcessors.Contains(t)
                             && t.GetConstructor(Type.EmptyTypes) != null);
 
             foreach (var processorType in processorTypes)
@@ -99,5 +105,37 @@ public class ModSystemRegistry
 
         _modProcessors.Remove(package.Manifest.Id);
         Log.Info($"[ModSystemRegistry] Unregistered {processors.Count} processors from mod '{package.Manifest.Id}'");
+    }
+
+    /// <summary>
+    /// Returns the set of processor types that are auto-created via [DefaultEntityComponentProcessor] attribute.
+    /// These should NOT be manually registered — Stride's EntityManager creates them automatically
+    /// when a component with the attribute is added to a scene.
+    /// </summary>
+    private static HashSet<Type> GetAutoCreatedProcessorTypes(Assembly assembly)
+    {
+        var result = new HashSet<Type>();
+        try
+        {
+            var attrType = typeof(DefaultEntityComponentProcessorAttribute);
+            foreach (var type in assembly.GetTypes())
+            {
+                var attr = type.GetCustomAttribute<DefaultEntityComponentProcessorAttribute>();
+                if (attr != null)
+                {
+                    // DynamicTypeAttributeBase stores the type as TypeName string
+                    // Resolve it back to a Type to know which processor is auto-created
+                    var processorTypeName = attr.TypeName;
+                    if (processorTypeName != null)
+                    {
+                        var processorType = Type.GetType(processorTypeName);
+                        if (processorType != null)
+                            result.Add(processorType);
+                    }
+                }
+            }
+        }
+        catch { }
+        return result;
     }
 }

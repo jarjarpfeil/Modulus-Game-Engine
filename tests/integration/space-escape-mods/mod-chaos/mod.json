@@ -1,0 +1,17 @@
+{
+  "id": "com.spaceescape.chaos",
+  "name": "SpaceEscape Chaos Mod",
+  "version": "1.0.0",
+  "apiVersion": "1.0",
+  "author": "Modulus Integration Test",
+  "description": "Adversarial mod that deliberately throws exceptions to test error boundaries.",
+  "entryPoint": "ModChaos.ModEntry, ModChaos",
+  "components": [
+    { "type": "ModChaos.ChaosComponent", "processor": "ModChaos.ChaosProcessor" }
+  ],
+  "systems": [],
+  "assets": [],
+  "loadOrder": 999,
+  "tags": ["spaceescape", "chaos", "integration-test", "adversarial"],
+  "type": "standard"
+}

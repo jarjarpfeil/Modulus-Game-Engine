@@ -131,9 +131,12 @@ public class ModValidatorTests
         Assert.Empty(ModValidator.Validate(manifest));
 
         manifest.Type = "patch";
+        // Patch mods require dependencies
+        manifest.Dependencies = [new ModDependency { Id = "com.example.target", MinVersion = "1.0.0" }];
         Assert.Empty(ModValidator.Validate(manifest));
 
         manifest.Type = "data";
+        manifest.Dependencies = [];
         Assert.Empty(ModValidator.Validate(manifest));
     }
 
@@ -176,5 +179,28 @@ public class ModValidatorTests
         };
         var errors = ModValidator.Validate(manifest);
         Assert.True(errors.Count >= 3, $"Expected at least 3 errors, got {errors.Count}: {string.Join("; ", errors)}");
+    }
+
+    [Fact]
+    public void PatchModWithoutDependencies_ReturnsError()
+    {
+        var manifest = CreateValidManifest();
+        manifest.Type = "patch";
+        manifest.Dependencies = [];
+        var errors = ModValidator.Validate(manifest);
+        Assert.Contains(errors, e => e.Contains("'patch'") && e.Contains("dependencies"));
+    }
+
+    [Fact]
+    public void PatchModWithDependencies_NoError()
+    {
+        var manifest = CreateValidManifest();
+        manifest.Type = "patch";
+        manifest.Dependencies =
+        [
+            new ModDependency { Id = "com.example.target", MinVersion = "1.0.0" }
+        ];
+        var errors = ModValidator.Validate(manifest);
+        Assert.DoesNotContain(errors, e => e.Contains("'patch'"));
     }
 }

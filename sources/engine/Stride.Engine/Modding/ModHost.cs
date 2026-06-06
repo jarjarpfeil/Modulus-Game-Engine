@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using Modulus.Modding.Api;
 using Stride.Core;
 using Stride.Core.Diagnostics;
 using Stride.Core.Serialization;
@@ -76,6 +77,11 @@ public class ModHost
         _exceptionHandler = new ModExceptionHandler();
         _shaderManager = new ModShaderManager();
         _orphanHandler = new OrphanComponentHandler();
+        
+        // Connect EffectSystem if available (for shader registration)
+        var effectSystem = services.GetService<Rendering.EffectSystem>();
+        if (effectSystem != null)
+            _shaderManager.SetEffectSystem(effectSystem);
     }
 
     /// <summary>
@@ -156,6 +162,26 @@ public class ModHost
 
         // Validate
         var errors = ModValidator.Validate(manifest);
+        
+        // Security: Check for native DLLs in mod directory
+        var nativeDllErrors = ModValidator.ValidateNoNativeDlls(modDirectory);
+        errors.AddRange(nativeDllErrors);
+        
+        // API Compatibility check
+        var compatReport = ModCompatibility.CheckCompatibility(manifest.ApiVersion, manifest.RejectFutureVersions);
+        if (!compatReport.IsLoadable)
+        {
+            errors.Add(compatReport.Message);
+            foreach (var issue in compatReport.Issues)
+                errors.Add($"  - {issue}");
+        }
+        else if (compatReport.Result == CompatibilityResult.CompatibleWithWarning)
+        {
+            Log.Warning($"[ModHost] Mod '{manifest.Id}': {compatReport.Message}");
+            foreach (var issue in compatReport.Issues)
+                Log.Warning($"[ModHost]   {issue}");
+        }
+        
         if (errors.Count > 0)
             throw new InvalidOperationException(
                 $"Mod validation failed for '{manifest.Id}':\n  - {string.Join("\n  - ", errors)}");
@@ -218,7 +244,13 @@ public class ModHost
         // Load and initialize the entry point (IMod) — crash-safe via ModExceptionHandler
         if (manifest.EntryPoint != null && package.ModAssembly != null)
         {
-            var entryType = package.ModAssembly.GetType(manifest.EntryPoint);
+            // Support "Namespace.Type, Assembly" format — extract just the type name
+            var entryPointTypeName = manifest.EntryPoint;
+            var commaIndex = entryPointTypeName.IndexOf(',');
+            if (commaIndex >= 0)
+                entryPointTypeName = entryPointTypeName.Substring(0, commaIndex).Trim();
+
+            var entryType = package.ModAssembly.GetType(entryPointTypeName);
             if (entryType != null)
             {
                 try
@@ -230,7 +262,7 @@ public class ModHost
                     if (instance is IMod mod)
                     {
                         var logger = GlobalLogger.GetLogger($"Mod.{manifest.Id}");
-                        var context = new ModContext(_services, logger, _eventBus, modDirectory);
+                        var context = new ModContext(_services, logger, _eventBus, modDirectory, manifest.Id);
 
                         _exceptionHandler.ExecuteModInitialize(manifest.Id, () =>
                         {
@@ -246,7 +278,8 @@ public class ModHost
                                 var saved = _stateStore.LoadState(manifest.Id);
                                 if (saved != null)
                                 {
-                                    serializable.Load(saved.Data, saved.Version);
+                                    using var stream = new MemoryStream(saved.Data);
+                                    serializable.Load(stream);
                                     Log.Info($"[ModHost] Restored state for mod '{manifest.Id}' (saved by v{saved.Version})");
                                 }
                             }
@@ -308,6 +341,9 @@ public class ModHost
         var tempDir = Path.Combine(ModsDirectory, ".temp_extract");
         if (Directory.Exists(tempDir))
             Directory.Delete(tempDir, recursive: true);
+        
+        // Invalidate discovery cache after install
+        ModDiscovery.InvalidateCache(ModsDirectory);
 
         return LoadMod(targetDir);
     }
@@ -332,8 +368,9 @@ public class ModHost
         {
             try
             {
-                var stateData = serializable.Save();
-                _stateStore.SaveState(modId, stateData, System.Version.Parse(package.Manifest.Version));
+                using var stream = new MemoryStream();
+                serializable.Save(stream);
+                _stateStore.SaveState(modId, stream.ToArray(), System.Version.Parse(package.Manifest.Version));
                 Log.Info($"[ModHost] Saved state for mod '{modId}'");
             }
             catch (Exception ex)
@@ -354,8 +391,16 @@ public class ModHost
         // Unregister mod shaders
         _shaderManager.UnregisterModShaders(modId);
 
-        // Unregister mod content
+        // Unregister mod content (removes GUID mappings too)
         _contentManager.UnregisterModContent(package);
+
+        // Wire OrphanComponentHandler: Check for re-hydration opportunities
+        if (package.ModAssembly != null)
+        {
+            var rehydrated = _orphanHandler.RehydrateOrphans(modId, package.ModAssembly);
+            if (rehydrated > 0)
+                Log.Info($"[ModHost] Re-hydrated {rehydrated} orphaned components for mod '{modId}'");
+        }
 
         // Perform full 17-step cleanup via lifecycle manager
         var alcWeakRef = _lifecycleManager.PerformFullCleanup(modId, package.ModAssembly, package);
@@ -392,6 +437,8 @@ public class ModHost
         if (package.ModAssembly != null)
         {
             _typeRegistry.RegisterModAssembly(package.ModAssembly);
+            // Only register systems if they weren't already registered
+            // (prevents duplicate processors after disable/enable cycle)
             _systemRegistry.RegisterModSystems(package);
         }
 
@@ -441,15 +488,29 @@ public class ModHost
     // ──────────────────────────────────────────────
 
     /// <summary>
-    /// Discovers all mods in ModsDirectory, validates dependencies, and loads them.
+    /// Discovers all mods in ModsDirectory, resolves dependency order, and loads them.
+    /// Uses ModLoadOrderResolver for deterministic topological sort with cycle detection.
     /// Returns the list of successfully loaded packages.
     /// </summary>
     public List<ModPackage> LoadAllMods()
     {
         var discovered = DiscoverMods();
-        var loaded = new List<ModPackage>();
 
-        foreach (var pkg in discovered)
+        // Resolve load order with dependency resolution
+        var resolver = new ModLoadOrderResolver();
+        var result = resolver.ResolveLoadOrder(discovered);
+
+        // Log warnings (e.g., missing optional deps)
+        foreach (var warning in result.Warnings)
+            Log.Warning($"[ModHost] {warning}");
+
+        // Log errors (cycles, missing required deps, version conflicts)
+        foreach (var error in result.Errors)
+            Log.Error($"[ModHost] {error.Message}");
+
+        // Load in resolved order
+        var loaded = new List<ModPackage>();
+        foreach (var pkg in result.OrderedMods)
         {
             try
             {
@@ -462,7 +523,7 @@ public class ModHost
             }
         }
 
-        Log.Info($"[ModHost] Loaded {loaded.Count}/{discovered.Count} mods");
+        Log.Info($"[ModHost] Loaded {loaded.Count}/{discovered.Count} mods ({result.Errors.Count} errors)");
         return loaded;
     }
 

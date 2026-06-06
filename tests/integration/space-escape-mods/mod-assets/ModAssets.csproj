@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>ModAssets</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\sources\engine\Modulus.Modding.Api\Modulus.Modding.Api.csproj" />
+    <ProjectReference Include="..\..\..\..\sources\engine\Stride.Engine\Stride.Engine.csproj" />
+    <ProjectReference Include="..\contracts\SpaceEscape.Contracts.csproj" />
+  </ItemGroup>
+  <!-- Data-only mod: no entry point, assets are copied at build time -->
+  <Target Name="CopyAssets" AfterTargets="Build">
+    <ItemGroup>
+      <AssetFiles Include="$(MSBuildThisFileDirectory)assets\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(AssetFiles)" DestinationFolder="$(TargetDir)assets\%(RecursiveDir)" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

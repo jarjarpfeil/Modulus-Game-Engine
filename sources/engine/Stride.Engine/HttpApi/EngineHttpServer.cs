@@ -23,6 +23,7 @@ namespace Stride.Engine.HttpApi
         private readonly HttpListener _listener;
         private readonly Dictionary<string, Func<HttpListenerRequest, Task<object>>> _routes = new();
         private readonly int _port;
+        private readonly ThreadLocal<Dictionary<string, string>> _currentPathParams = new(() => new());
 
         public EngineHttpServer(int port = 9876)
         {
@@ -111,8 +112,9 @@ namespace Stride.Engine.HttpApi
                 var match = MatchRoute(method, url, out var pathParams);
                 if (match != null && _routes.TryGetValue(match, out var handler))
                 {
-                    // Store path params in request for handlers
-                    ctx.Request.QueryString.Add("___pathParams", JsonSerializer.Serialize(pathParams));
+                    // Store path params in a thread-local for handlers to access
+                    // (QueryString.Add throws because it's read-only)
+                    _currentPathParams.Value = pathParams;
 
                     var result = await handler(ctx.Request).WithTimeout(TimeSpan.FromSeconds(5));
                     var json = JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });

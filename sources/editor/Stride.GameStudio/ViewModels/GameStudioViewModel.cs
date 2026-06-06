@@ -39,6 +39,9 @@ namespace Stride.GameStudio.ViewModels
             OpenAboutPageCommand = new AnonymousCommand(serviceProvider, OpenAboutPage);
             OpenSessionCommand = new AnonymousTaskCommand<UFile>(serviceProvider, RestartAndOpenSession);
             ReloadSessionCommand = new AnonymousTaskCommand(serviceProvider, () => RestartAndOpenSession(Session.SessionFilePath));
+
+            // Wire up Mod Manager from ModdingPlugin when it becomes available
+            Modding.Editor.ModdingPlugin.Instance?.SetModManagerCallback(vm => ModManager = vm);
         }
 
         public static GameStudioViewModel GameStudio => (GameStudioViewModel)Instance;
@@ -51,6 +54,12 @@ namespace Stride.GameStudio.ViewModels
         public PreviewViewModel Preview { get; set => SetValue(ref field, value); }
 
         public DebuggingViewModel Debugging { get; set => SetValue(ref field, value); }
+
+        /// <summary>
+        /// Mod Manager ViewModel — set by ModdingPlugin during session initialization.
+        /// Null until a session is loaded.
+        /// </summary>
+        public object? ModManager { get; set => SetValue(ref field, value); }
 
         [NotNull]
         public IReadOnlyList<IDEInfo> AvailableIDEs => availableIDEs;

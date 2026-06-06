@@ -42,7 +42,7 @@ public class ModLoadContext : AssemblyLoadContext
     /// <summary>
     /// Resolution policy for cross-ALC type identity:
     ///   - Core API assemblies → delegate to default context (null = use default)
-    ///   - Shared dependencies → resolve through ModHost's shared assembly map
+    ///   - Shared dependencies → delegate to default context (null = use default)
     ///   - Everything else → isolated to this ALC
     /// </summary>
     protected override Assembly? Load(AssemblyName assemblyName)
@@ -56,9 +56,12 @@ public class ModLoadContext : AssemblyLoadContext
         if (IsCoreApiAssembly(name))
             return null; // Falls back to default load behavior
 
-        // Route shared dependencies to their owning ALCs.
-        if (_host.TryGetLoadedSharedAssembly(name, out var sharedAssembly))
-            return sharedAssembly;
+        // Route shared dependencies to the default context to preserve type identity.
+        // IMPORTANT: Do NOT return the shared assembly directly — that would create a
+        // new reference from this ALC to the shared assembly's ALC, preventing collection.
+        // Instead, return null to delegate to the default context which already has it loaded.
+        if (_host.TryGetLoadedSharedAssembly(name, out _))
+            return null; // Delegate to default context
 
         // Standard isolation: mod-private assemblies stay in this ALC.
         return null;

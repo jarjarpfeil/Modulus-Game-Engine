@@ -1,0 +1,15 @@
+{
+  "id": "com.modulus.test.system-replacer",
+  "name": "Test System Replacer",
+  "version": "1.0.0",
+  "apiVersion": "1.0",
+  "author": "Modulus Team",
+  "description": "Test mod that replaces core engine systems via the service registry.",
+  "entryPoint": "TestSystemReplacer.ModEntry, TestSystemReplacer",
+  "components": [],
+  "systems": [],
+  "assets": [],
+  "loadOrder": 100,
+  "tags": ["test", "services"],
+  "type": "standard"
+}

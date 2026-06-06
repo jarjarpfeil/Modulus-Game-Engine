@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Modulus.Modding.Api;
 using Stride.Core.Diagnostics;
 
 namespace Stride.Engine.Modding;

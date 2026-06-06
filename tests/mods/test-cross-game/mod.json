@@ -1,0 +1,20 @@
+{
+  "id": "com.modulus.test.cross-game",
+  "name": "Test Cross-Game Mod",
+  "version": "1.0.0",
+  "apiVersion": "1.0",
+  "author": "Modulus Team",
+  "description": "Test mod that proves cross-game compatibility. Same mod works in multiple games.",
+  "entryPoint": "TestCrossGame.ModEntry, TestCrossGame",
+  "components": [
+    {
+      "type": "TestCrossGame.HealthComponent",
+      "processor": "TestCrossGame.HealthProcessor"
+    }
+  ],
+  "systems": [],
+  "assets": [],
+  "loadOrder": 50,
+  "tags": ["test", "cross-game"],
+  "type": "standard"
+}

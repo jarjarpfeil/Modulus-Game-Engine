@@ -5,6 +5,7 @@ using System;
 using System.IO;
 using System.IO.Compression;
 using System.Reflection;
+using Modulus.Modding.Api;
 
 namespace Stride.Engine.Modding;
 
@@ -84,25 +85,33 @@ public sealed class ModPackage
 
     /// <summary>
     /// Extracts a .modpkg zip to a temp directory and creates a ModPackage from it.
+    /// Uses system temp directory to avoid cluttering the mods folder.
     /// </summary>
     public static ModPackage FromModPkg(string modPkgPath, string extractDirectory)
     {
         if (!File.Exists(modPkgPath))
             throw new FileNotFoundException($"Mod package not found: {modPkgPath}");
 
-        Directory.CreateDirectory(extractDirectory);
+        // Use system temp directory for extraction to avoid leaving temp files in mods/
+        var tempDir = Path.Combine(Path.GetTempPath(), "ModulusEngine", "modpkg-extract", Path.GetFileNameWithoutExtension(modPkgPath));
+        if (Directory.Exists(tempDir))
+            Directory.Delete(tempDir, recursive: true);
+        
+        Directory.CreateDirectory(tempDir);
 
         using var zip = ZipFile.OpenRead(modPkgPath);
-        zip.ExtractToDirectory(extractDirectory, overwriteFiles: true);
+        zip.ExtractToDirectory(tempDir, overwriteFiles: true);
 
-        var manifestPath = Path.Combine(extractDirectory, "mod.json");
+        var manifestPath = Path.Combine(tempDir, "mod.json");
         if (!File.Exists(manifestPath))
             throw new InvalidDataException($".modpkg missing mod.json: {modPkgPath}");
 
         using var manifestStream = File.OpenRead(manifestPath);
         var manifest = ModManifest.FromStream(manifestStream);
 
-        return new ModPackage(manifest, extractDirectory);
+        // Return package pointing to temp directory for inspection
+        // Caller should copy to final location if keeping
+        return new ModPackage(manifest, tempDir);
     }
 }
 

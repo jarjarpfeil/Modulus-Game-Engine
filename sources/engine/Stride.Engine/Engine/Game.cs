@@ -415,6 +415,7 @@ namespace Stride.Engine
             // Initialize the ModHost for mod lifecycle management
             ModHost = new ModHost(Services);
             ModHost.RegisterService();
+            ModHost.EnableStatePersistence();
 
             // TODO: data-driven?
             Content.Serializer.RegisterSerializer(new ImageSerializer());

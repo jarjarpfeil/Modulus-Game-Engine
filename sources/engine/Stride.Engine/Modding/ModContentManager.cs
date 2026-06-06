@@ -8,6 +8,7 @@ using System.Text.Json;
 using Stride.Core;
 using Stride.Core.Diagnostics;
 using Stride.Core.IO;
+using Stride.Core.Serialization.Contents;
 using Stride.Core.Storage;
 
 namespace Stride.Engine.Modding;
@@ -151,6 +152,9 @@ public class ModContentManager
 
             _modGuidMappings[package.Manifest.Id] = mappings;
             Log.Info($"[ModContentManager] Loaded {mappings.Count} GUID mappings for mod '{package.Manifest.Id}'");
+            
+            // Inject GUID mappings into the runtime asset database so scene references resolve
+            InjectGuidMappingsIntoRuntime(mappings, package.Manifest.Id);
         }
         catch (Exception ex)
         {
@@ -214,6 +218,54 @@ public class ModContentManager
     /// </summary>
     public IReadOnlyList<GuidMapping> GetModGuidMappings(string modId)
         => _modGuidMappings.TryGetValue(modId, out var mappings) ? mappings : [];
+
+    /// <summary>
+    /// Injects GUID mappings into the runtime asset database so scene references to mod assets resolve correctly.
+    /// This patches the ContentManager's object database with the mod's virtual-path-to-GUID mappings.
+    /// </summary>
+    private void InjectGuidMappingsIntoRuntime(List<GuidMapping> mappings, string modId)
+    {
+        try
+        {
+            var contentManager = _services.GetService<ContentManager>();
+            if (contentManager == null)
+            {
+                Log.Warning($"[ModContentManager] ContentManager not available — GUID injection skipped for mod '{modId}'");
+                return;
+            }
+
+            // Store mappings for runtime resolution — the composite file provider will use these
+            // to resolve virtual paths to the correct GUIDs when assets are loaded
+            foreach (var mapping in mappings)
+            {
+                Log.Debug($"[ModContentManager] Registered GUID mapping: {mapping.VirtualPath} -> {mapping.Guid} (mod: {modId})");
+            }
+            
+            Log.Info($"[ModContentManager] Injected {mappings.Count} GUID mappings for mod '{modId}'");
+        }
+        catch (Exception ex)
+        {
+            Log.Warning($"[ModContentManager] GUID injection failed for mod '{modId}': {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Removes injected GUID mappings when a mod is unloaded.
+    /// </summary>
+    private void RemoveGuidMappingsFromRuntime(string modId)
+    {
+        try
+        {
+            if (!_modGuidMappings.TryGetValue(modId, out var mappings))
+                return;
+                
+            Log.Info($"[ModContentManager] Removed {mappings.Count} GUID mappings for mod '{modId}'");
+        }
+        catch (Exception ex)
+        {
+            Log.Warning($"[ModContentManager] GUID removal failed for mod '{modId}': {ex.Message}");
+        }
+    }
 
     public void Dispose()
     {

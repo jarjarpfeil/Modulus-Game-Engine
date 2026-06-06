@@ -22,16 +22,12 @@ namespace Stride.Engine.HttpApi
         private static readonly Logger Log = GlobalLogger.GetLogger("HttpApi");
 
         private Func<string, string, string?, Task<string?>>? _previousHandler;
+        private Func<string, string, string?, Task<string?>>? _editorHandler;
 
         /// <summary>
         /// Queue for ECS reads/writes — drained during Update().
         /// </summary>
         private readonly ConcurrentQueue<WorkItem> _updateQueue = new();
-
-        /// <summary>
-        /// Queue for GPU commands — drained during Draw().
-        /// </summary>
-        private readonly ConcurrentQueue<WorkItem> _drawQueue = new();
 
         private class WorkItem
         {
@@ -148,8 +144,9 @@ namespace Stride.Engine.HttpApi
             var server = EditorHttpServer.Instance;
             if (server != null)
             {
-                // Save the previous handler (editor routes)
-                _previousHandler = null; // Will be set via reflection or callback
+                // Save the editor handler before replacing it
+                _editorHandler = server.GetRequestHandler();
+                _previousHandler = _editorHandler;
                 server.SetRequestHandler(HandleGameRequest);
                 Log.Info("[HttpApi] Game runtime registered with shared HTTP server");
             }
@@ -164,11 +161,24 @@ namespace Stride.Engine.HttpApi
             base.Update(gameTime);
 
             // Drain the update queue — process ECS work on the game thread
-            while (_updateQueue.TryDequeue(out var item))
+            // Limit items per frame to prevent hitching (max 50ms worth of work)
+            var frameStart = DateTime.UtcNow;
+            const int maxItemsPerFrame = 100;
+            int processed = 0;
+            
+            while (_updateQueue.TryDequeue(out var item) && processed < maxItemsPerFrame)
             {
                 try
                 {
                     item.Action();
+                    processed++;
+                    
+                    // Check if we've spent too long on HTTP work this frame
+                    if ((DateTime.UtcNow - frameStart).TotalMilliseconds > 50)
+                    {
+                        Log.Debug($"[HttpApi] Frame budget exhausted after {processed} items — deferring remaining work");
+                        break;
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -178,34 +188,14 @@ namespace Stride.Engine.HttpApi
             }
         }
 
-        public override void Draw(GameTime gameTime)
-        {
-            base.Draw(gameTime);
-
-            // Drain the draw queue — process GPU work on the render thread
-            while (_drawQueue.TryDequeue(out var item))
-            {
-                try
-                {
-                    item.Action();
-                }
-                catch (Exception ex)
-                {
-                    Log.Warning($"[HttpApi] Draw work item failed: {ex.Message}");
-                    item.Completion?.TrySetException(ex);
-                }
-            }
-        }
-
         protected override void Destroy()
         {
-            // Restore the previous handler (editor routes) when game stops
+            // Restore the editor handler when game stops
             var server = EditorHttpServer.Instance;
-            if (server != null)
+            if (server != null && _editorHandler != null)
             {
-                // Re-register the editor handler
-                // This is a simplification — in production, we'd properly chain handlers
-                Log.Info("[HttpApi] Game runtime unregistered from HTTP server");
+                server.SetRequestHandler(_editorHandler);
+                Log.Info("[HttpApi] Game runtime unregistered — editor handler restored");
             }
             base.Destroy();
         }

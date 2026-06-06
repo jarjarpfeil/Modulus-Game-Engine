@@ -1,0 +1,21 @@
+{
+  "id": "com.spaceescape.background",
+  "name": "SpaceEscape Background Mod",
+  "version": "1.0.0",
+  "apiVersion": "1.0",
+  "author": "Modulus Integration Test",
+  "description": "Scrolling background, procedural level generation, collision detection, hole detection.",
+  "entryPoint": "ModBackground.ModEntry, ModBackground",
+  "components": [
+    { "type": "ModBackground.BackgroundInfoComponent", "processor": null },
+    { "type": "ModBackground.ObstacleInfoComponent", "processor": null }
+  ],
+  "systems": [],
+  "assets": [],
+  "loadOrder": 20,
+  "dependencies": [
+    { "id": "com.spaceescape.character", "minVersion": "1.0.0", "optional": false }
+  ],
+  "tags": ["spaceescape", "background", "integration-test"],
+  "type": "standard"
+}

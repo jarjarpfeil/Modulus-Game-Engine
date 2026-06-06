@@ -1,13 +1,16 @@
-// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org & https://stride3d.net) and Silicon Studio Corp. (https://www.siliconstudio.co.jp)
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org & https://stride3d.net) and Silicon Studio Corp. (https://siliconstudio.co.jp)
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 using System;
 
-namespace Stride.Engine.Modding;
+namespace Modulus.Modding.Api;
 
 /// <summary>
 /// Entry point interface for mods. Every mod DLL that declares an entryPoint in mod.json
 /// must implement this interface. The engine calls these methods during the mod lifecycle.
+///
+/// This is part of the stable <c>Modulus.Modding.Api</c> ABI — signatures will not change
+/// within a major version.
 /// </summary>
 public interface IMod
 {

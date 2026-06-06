@@ -14,14 +14,52 @@ namespace Stride.Engine.Modding;
 public static class ModDiscovery
 {
     private static readonly Logger Log = GlobalLogger.GetLogger("ModDiscovery");
+    
+    // Cache: modsDirectory -> (lastScanTime, packages)
+    private static readonly Dictionary<string, (DateTime LastScan, List<ModPackage> Packages)> _discoveryCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly object _cacheLock = new();
+    private static readonly TimeSpan CacheDuration = TimeSpan.FromSeconds(5);
 
     /// <summary>
     /// Discovers all mod packages in the given mods directory.
     /// Supports both .modpkg archives and unpacked mod directories containing mod.json.
+    /// Results are cached for 5 seconds to avoid repeated filesystem scans.
     /// </summary>
     /// <param name="modsDirectory">Path to the mods/ directory</param>
     /// <returns>List of discovered ModPackage instances (not yet loaded).</returns>
     public static List<ModPackage> Discover(string modsDirectory)
+    {
+        lock (_cacheLock)
+        {
+            if (_discoveryCache.TryGetValue(modsDirectory, out var cached))
+            {
+                if ((DateTime.UtcNow - cached.LastScan) < CacheDuration)
+                    return new List<ModPackage>(cached.Packages);
+            }
+        }
+        
+        var packages = DiscoverInternal(modsDirectory);
+        
+        lock (_cacheLock)
+        {
+            _discoveryCache[modsDirectory] = (DateTime.UtcNow, packages);
+        }
+        
+        return new List<ModPackage>(packages);
+    }
+    
+    /// <summary>
+    /// Invalidates the discovery cache for a directory (call after install/uninstall).
+    /// </summary>
+    public static void InvalidateCache(string modsDirectory)
+    {
+        lock (_cacheLock)
+        {
+            _discoveryCache.Remove(modsDirectory);
+        }
+    }
+    
+    private static List<ModPackage> DiscoverInternal(string modsDirectory)
     {
         var packages = new List<ModPackage>();
 

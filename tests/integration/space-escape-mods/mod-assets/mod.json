@@ -1,0 +1,22 @@
+{
+  "id": "com.spaceescape.assets",
+  "name": "SpaceEscape Assets Mod",
+  "version": "1.0.0",
+  "apiVersion": "1.0",
+  "author": "Modulus Integration Test",
+  "description": "All SpaceEscape binary assets: models, textures, materials, scenes, animations, shaders.",
+  "entryPoint": null,
+  "components": [],
+  "systems": [],
+  "assets": [
+    "assets/Scene.sdscene",
+    "assets/LevelBlocks.sdscene",
+    "assets/GraphicsCompositor.sdgfxcomp",
+    "assets/GameSettings.sdgamesettings",
+    "assets/Font.sdfnt",
+    "assets/UIImages.sdsheet"
+  ],
+  "loadOrder": 1,
+  "tags": ["spaceescape", "assets", "integration-test"],
+  "type": "data"
+}

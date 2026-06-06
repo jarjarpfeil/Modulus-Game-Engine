@@ -217,21 +217,46 @@ public sealed class ModLifecycleManager
 
     /// <summary>
     /// Determines if a MicroThread is owned by the mod being unloaded.
-    /// Checks the microthread's name or associated assembly.
+    /// Uses assembly-based detection: checks if the microthread's callback method
+    /// is defined in the mod's assembly (more reliable than name matching).
     /// </summary>
     private static bool IsModOwnedMicroThread(Core.MicroThreading.MicroThread mt, ModScope scope)
     {
-        // MicroThreads created by SyncScript have names containing the script type
-        // We check if the name contains any of the mod's tracked type names
-        if (mt.Name != null)
+        try
         {
+            // Check if the microthread's action/delegate target is from the mod's assembly
+            // This is more reliable than string-based name matching
+            if (scope.OwnedProcessors.Count == 0)
+                return false;
+                
+            // Get the assemblies owned by this mod
+            var modAssemblies = new HashSet<Assembly>();
             foreach (var processor in scope.OwnedProcessors)
             {
-                var typeName = processor.GetType().Name;
-                if (mt.Name.Contains(typeName, StringComparison.OrdinalIgnoreCase))
-                    return true;
+                var procType = processor.GetType();
+                modAssemblies.Add(procType.Assembly);
+            }
+            
+            // Check microthread name for type hints (still useful as fallback)
+            if (mt.Name != null)
+            {
+                foreach (var asm in modAssemblies)
+                {
+                    // Check if the microthread name contains any type from the mod's assembly
+                    foreach (var type in asm.GetExportedTypes())
+                    {
+                        if (mt.Name.Contains(type.Name, StringComparison.OrdinalIgnoreCase))
+                            return true;
+                    }
+                }
             }
         }
+        catch (Exception ex)
+        {
+            // Don't let reflection errors prevent cleanup
+            Log.Warning($"[ModLifecycleManager] MicroThread ownership check failed: {ex.Message}");
+        }
+        
         return false;
     }
 

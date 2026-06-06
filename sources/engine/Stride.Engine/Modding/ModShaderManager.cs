@@ -33,6 +33,19 @@ public sealed class ModShaderManager
 
     // modId -> list of registered shader entries with file validation
     private readonly Dictionary<string, List<RegisteredShader>> _registeredShaders = new(StringComparer.OrdinalIgnoreCase);
+    
+    // Reference to the EffectSystem for shader registration
+    private object? _effectSystem;
+
+    /// <summary>
+    /// Sets the EffectSystem instance for shader registration.
+    /// Call this during engine initialization before loading mods.
+    /// </summary>
+    public void SetEffectSystem(object effectSystem)
+    {
+        _effectSystem = effectSystem;
+        Log.Info("[ModShaderManager] EffectSystem connected");
+    }
 
     /// <summary>
     /// Registers all shaders from a mod's manifest.

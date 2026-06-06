@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>ModReassemblyHost</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <OutputType>WinExe</OutputType>
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\sources\engine\Modulus.Modding.Api\Modulus.Modding.Api.csproj" />
+    <ProjectReference Include="..\..\..\sources\engine\Stride.Engine\Stride.Engine.csproj" />
+    <ProjectReference Include="..\contracts\SpaceEscape.Contracts.csproj" />
+  </ItemGroup>
+</Project>

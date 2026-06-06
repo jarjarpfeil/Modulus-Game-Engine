@@ -1,0 +1,18 @@
+{
+  "id": "com.spaceescape.rendering",
+  "name": "SpaceEscape Rendering Mod",
+  "version": "1.0.0",
+  "apiVersion": "1.0",
+  "author": "Modulus Integration Test",
+  "description": "Custom render feature: fog, world bending, UV scrolling.",
+  "entryPoint": "ModRendering.ModEntry, ModRendering",
+  "shaders": [
+    { "name": "CustomFogEffect", "path": "shaders/CustomFogEffect.sdsl" },
+    { "name": "TransformationBendWorld", "path": "shaders/TransformationBendWorld.sdsl" },
+    { "name": "TransformationTextureUV", "path": "shaders/TransformationTextureUV.sdsl" },
+    { "name": "SpaceEscapeEffectMain", "path": "shaders/SpaceEscapeEffectMain.sdfx" }
+  ],
+  "loadOrder": 5,
+  "tags": ["spaceescape", "rendering", "integration-test"],
+  "type": "standard"
+}
