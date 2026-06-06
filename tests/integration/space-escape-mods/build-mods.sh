@@ -9,10 +9,21 @@ SLN="$ROOT/../../../../build/Stride.sln"
 
 echo "=== Building SpaceEscape Integration Test Mods ==="
 
+# Clean up locked ssdeps files that cause build failures
+find "$ROOT/../../../../sources" -name '*.ssdeps' -path '*/bin/*' -delete 2>/dev/null || true
+
 # Build each mod
+declare -A MOD_NAMES
+MOD_NAMES[mod-character]="ModCharacter"
+MOD_NAMES[mod-background]="ModBackground"
+MOD_NAMES[mod-ui]="ModUI"
+MOD_NAMES[mod-rendering]="ModRendering"
+MOD_NAMES[mod-chaos]="ModChaos"
+
 for mod in mod-character mod-background mod-ui mod-rendering mod-chaos; do
-    echo "--- Building $mod ---"
-    dotnet build "$ROOT/$mod/$mod.csproj" \
+    proj="${MOD_NAMES[$mod]}"
+    echo "--- Building $mod ($proj.csproj) ---"
+    dotnet build "$ROOT/$mod/$proj.csproj" \
         -p:StrideNativeWindowsArm64Enabled=false \
         -c Debug
 done

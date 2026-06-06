@@ -413,8 +413,15 @@ namespace Stride.Engine
             GameSystems.Add(VRDeviceSystem);
 
             // Initialize the ModHost for mod lifecycle management
-            ModHost = new ModHost(Services);
-            ModHost.RegisterService();
+            // Note: ModHost is already created and registered in Game() constructor (line 246)
+            // We just need to ensure it's wired up properly here
+            ModHost = Services.GetService<ModHost>();
+            if (ModHost == null)
+            {
+                // Fallback: create one if not found (shouldn't happen)
+                ModHost = new ModHost(Services);
+                ModHost.RegisterService();
+            }
             ModHost.EnableStatePersistence();
 
             // TODO: data-driven?

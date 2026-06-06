@@ -13,29 +13,33 @@ public static class ModReassemblyHostApp
     {
         using var game = new Game();
 
-        // Initialize ModHost
-        var modHost = new ModHost(game.Services)
+        // Game() constructor already creates and registers ModHost (line 246-247 of Game.cs)
+        var modHost = game.Services.GetService<Stride.Engine.Modding.ModHost>();
+        if (modHost == null)
         {
-            ModsDirectory = Path.Combine(AppContext.BaseDirectory, "mods")
-        };
-        modHost.RegisterService();
-        modHost.EnableStatePersistence();
+            throw new InvalidOperationException("ModHost not found — Game() constructor should have created it");
+        }
+
+        modHost.ModsDirectory = Path.Combine(AppContext.BaseDirectory, "mods");
 
         // Register the host service for mods to use
         game.Services.AddService<ISpaceEscapeHost>(new SpaceEscapeHostService());
 
-        // Load all mods in dependency order
-        var loaded = modHost.LoadAllMods();
-
-        // Log results
-        var logger = Stride.Core.Diagnostics.GlobalLogger.GetLogger("ModReassemblyHost");
-        logger.Info($"Loaded {loaded.Count} mods:");
-        foreach (var pkg in loaded)
+        // Load all mods after game initialization completes
+        Game.GameStarted += (_, _) =>
         {
-            logger.Info($"  {pkg.Manifest.Id} v{pkg.Manifest.Version} - State: {pkg.State}");
-        }
+            modHost.EnableStatePersistence();
 
-        // Start the game
+            var loaded = modHost.LoadAllMods();
+
+            var logger = Stride.Core.Diagnostics.GlobalLogger.GetLogger("ModReassemblyHost");
+            logger.Info($"Loaded {loaded.Count} mods:");
+            foreach (var pkg in loaded)
+            {
+                logger.Info($"  {pkg.Manifest.Id} v{pkg.Manifest.Version} - State: {pkg.State}");
+            }
+        };
+
         game.Run();
     }
 }
