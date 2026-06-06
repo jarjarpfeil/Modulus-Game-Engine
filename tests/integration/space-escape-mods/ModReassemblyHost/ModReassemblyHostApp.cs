@@ -25,7 +25,7 @@ public static class ModReassemblyHostApp
         // Register the host service for mods to use
         game.Services.AddService<ISpaceEscapeHost>(new SpaceEscapeHostService());
 
-        // Load all mods after game initialization completes
+        // Load all mods after game initialization completes, then exit
         Game.GameStarted += (_, _) =>
         {
             modHost.EnableStatePersistence();
@@ -38,6 +38,9 @@ public static class ModReassemblyHostApp
             {
                 logger.Info($"  {pkg.Manifest.Id} v{pkg.Manifest.Version} - State: {pkg.State}");
             }
+
+            // Exit after loading mods (this is a test harness, not a game)
+            game.Exit();
         };
 
         game.Run();
