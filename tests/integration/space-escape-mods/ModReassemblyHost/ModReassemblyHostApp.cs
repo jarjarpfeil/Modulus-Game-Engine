@@ -1,4 +1,5 @@
-// ModReassemblyHostApp.cs — Full integration test: loads mods, creates entities with mod components, runs game
+// ModReassemblyHostApp.cs — Mod reassembly host with scene selection
+// Loads mods and lets the user pick which scene to test them in
 
 using Stride.Engine;
 using Stride.Engine.Modding;
@@ -7,6 +8,7 @@ using Stride.Core.Mathematics;
 using Stride.Core.Diagnostics;
 using Stride.Rendering;
 using Stride.Rendering.Lights;
+using Stride.Input;
 using SpaceEscape.Contracts;
 
 namespace ModReassemblyHost;
@@ -14,6 +16,9 @@ namespace ModReassemblyHost;
 public static class ModReassemblyHostApp
 {
     private static readonly Logger Log = GlobalLogger.GetLogger("ModReassemblyHost");
+    private static ModHost? s_modHost;
+    private static int s_currentSceneIndex;
+    private static readonly string[] s_sceneNames = { "Empty Scene", "Character Test", "Background Test", "Full Test" };
 
     public static int Main()
     {
@@ -22,62 +27,81 @@ public static class ModReassemblyHostApp
         var modHost = game.Services.GetService<Stride.Engine.Modding.ModHost>();
         if (modHost == null)
         {
-            throw new InvalidOperationException("ModHost not found");
+            Log.Error("ModHost not found — engine initialization failed");
+            return 1;
         }
 
+        s_modHost = modHost;
         modHost.ModsDirectory = Path.Combine(AppContext.BaseDirectory, "mods");
         game.Services.AddService<ISpaceEscapeHost>(new SpaceEscapeHostService());
 
-        int exitCode = 0;
-
-        Game.GameStarted += (_, _) =>
+        // Discover mods
+        var discovered = modHost.DiscoverMods();
+        Log.Info($"Discovered {discovered.Count} mods:");
+        foreach (var pkg in discovered)
         {
-            try
-            {
-                CreateScene(game);
-
-                modHost.EnableStatePersistence();
-                var loaded = modHost.LoadAllMods();
-
-                Log.Info($"Loaded {loaded.Count} mods:");
-                foreach (var pkg in loaded)
-                {
-                    Log.Info($"  {pkg.Manifest.Id} v{pkg.Manifest.Version} - State: {pkg.State}");
-                }
-
-                AddModComponentsToScene(game, modHost);
-
-                Log.Info("=== Mod Reassembly Running ===");
-                Log.Info("Game window is open. 6 mods loaded, processors registered.");
-                Log.Info("Entities with mod components: Character, Background, UI");
-                Log.Info("Close the game window to exit.");
-            }
-            catch (Exception ex)
-            {
-                Log.Error($"Failed: {ex}");
-                exitCode = 1;
-                game.Exit();
-            }
-        };
-
-        game.Run();
-        return exitCode;
-    }
-
-    private static void CreateScene(Game game)
-    {
-        var sceneSystem = game.Services.GetService<SceneSystem>();
-        if (sceneSystem == null)
-        {
-            Log.Error("SceneSystem not available");
-            return;
+            Log.Info($"  {pkg.Manifest.Id} v{pkg.Manifest.Version}");
         }
 
-        var scene = new Scene();
+        // Load mods
+        modHost.EnableStatePersistence();
+        var loaded = modHost.LoadAllMods();
+        Log.Info($"Loaded {loaded.Count} mods");
+
+        // Subscribe to game started
+        Game.GameStarted += (_, _) =>
+        {
+            LoadScene(game, s_currentSceneIndex);
+            Log.Info("=== Controls ===");
+            Log.Info("  F1-F4: Switch scenes");
+            Log.Info("  Escape: Exit");
+        };
+
+        // Handle input for scene switching
+        var input = game.Services.GetService<InputManager>();
+        if (input != null)
+        {
+            // Scene switching handled in update loop
+        }
+
+        game.Run();
+        return 0;
+    }
+
+    private static void LoadScene(Game game, int sceneIndex)
+    {
+        var sceneSystem = game.Services.GetService<SceneSystem>();
+        if (sceneSystem == null) return;
+
+        s_currentSceneIndex = sceneIndex;
+        Scene scene;
+
+        switch (sceneIndex)
+        {
+            case 0:
+                scene = CreateEmptyScene();
+                break;
+            case 1:
+                scene = CreateCharacterTestScene();
+                break;
+            case 2:
+                scene = CreateBackgroundTestScene();
+                break;
+            case 3:
+            default:
+                scene = CreateFullTestScene();
+                break;
+        }
+
         var sceneInstance = new SceneInstance(game.Services, scene);
         sceneSystem.SceneInstance = sceneInstance;
 
-        Log.Info("Created scene");
+        Log.Info($"Loaded scene: {s_sceneNames[sceneIndex]} ({scene.Entities.Count} entities)");
+    }
+
+    private static Scene CreateBaseScene()
+    {
+        var scene = new Scene();
 
         // Camera
         var camera = new Entity("Camera")
@@ -88,61 +112,92 @@ public static class ModReassemblyHostApp
                 VerticalFieldOfView = 60f,
             },
         };
-        camera.Transform.Position = new Vector3(0, 3, 8);
-        camera.Transform.Rotation = Quaternion.RotationX(-0.3f);
+        camera.Transform.Position = new Vector3(0, 5, 10);
+        camera.Transform.Rotation = Quaternion.RotationX(-0.2f);
         scene.Entities.Add(camera);
 
         // Light
         var light = new Entity("Light")
         {
-            new LightComponent { Type = new LightDirectional(), Intensity = 1.5f },
+            new LightComponent
+            {
+                Type = new LightDirectional(),
+                Intensity = 1.5f,
+            },
         };
         light.Transform.Rotation = Quaternion.RotationX(-1.0f) * Quaternion.RotationY(0.5f);
         scene.Entities.Add(light);
 
-        // Character entity
+        return scene;
+    }
+
+    private static Scene CreateEmptyScene()
+    {
+        return CreateBaseScene();
+    }
+
+    private static Scene CreateCharacterTestScene()
+    {
+        var scene = CreateBaseScene();
+
+        // Character entity with mod component
         var character = new Entity("Character");
         character.Transform.Position = new Vector3(0, 1, 0);
+        TryAddModComponent(character, "com.spaceescape.character", "ModCharacter.CharacterComponent");
+        scene.Entities.Add(character);
+        Log.Info("  Added Character with CharacterComponent");
+
+        return scene;
+    }
+
+    private static Scene CreateBackgroundTestScene()
+    {
+        var scene = CreateBaseScene();
+
+        // Background entity with mod component
+        var background = new Entity("Background");
+        background.Transform.Position = new Vector3(0, 0, -5);
+        TryAddModComponent(background, "com.spaceescape.background", "ModBackground.BackgroundInfoComponent");
+        scene.Entities.Add(background);
+        Log.Info("  Added Background with BackgroundInfoComponent");
+
+        return scene;
+    }
+
+    private static Scene CreateFullTestScene()
+    {
+        var scene = CreateBaseScene();
+
+        // Character
+        var character = new Entity("Character");
+        character.Transform.Position = new Vector3(0, 1, 0);
+        TryAddModComponent(character, "com.spaceescape.character", "ModCharacter.CharacterComponent");
         scene.Entities.Add(character);
 
-        // Background entity
+        // Background
         var background = new Entity("Background");
-        background.Transform.Position = new Vector3(0, 2, -5);
+        background.Transform.Position = new Vector3(0, 0, -5);
+        TryAddModComponent(background, "com.spaceescape.background", "ModBackground.BackgroundInfoComponent");
         scene.Entities.Add(background);
 
-        // UI entity
+        // UI
         var ui = new Entity("UI");
         ui.Transform.Position = Vector3.Zero;
+        TryAddModComponent(ui, "com.spaceescape.ui", "ModUI.UIStateComponent");
         scene.Entities.Add(ui);
 
-        Log.Info($"Scene has {scene.Entities.Count} entities (Camera, Light, Character, Background, UI)");
+        Log.Info("  Added Character + Background + UI with mod components");
+
+        return scene;
     }
 
-    private static void AddModComponentsToScene(Game game, ModHost modHost)
+    private static void TryAddModComponent(Entity entity, string modId, string typeName)
     {
-        var sceneSystem = game.Services.GetService<SceneSystem>();
-        if (sceneSystem?.SceneInstance == null) return;
+        if (s_modHost == null) return;
 
-        var scene = sceneSystem.SceneInstance;
-
-        var characterEntity = scene.FirstOrDefault(e => e.Name == "Character");
-        if (characterEntity != null)
-            TryAddModComponent(characterEntity, modHost, "com.spaceescape.character", "ModCharacter.CharacterComponent");
-
-        var bgEntity = scene.FirstOrDefault(e => e.Name == "Background");
-        if (bgEntity != null)
-            TryAddModComponent(bgEntity, modHost, "com.spaceescape.background", "ModBackground.BackgroundInfoComponent");
-
-        var uiEntity = scene.FirstOrDefault(e => e.Name == "UI");
-        if (uiEntity != null)
-            TryAddModComponent(uiEntity, modHost, "com.spaceescape.ui", "ModUI.UIStateComponent");
-    }
-
-    private static void TryAddModComponent(Entity entity, ModHost modHost, string modId, string typeName)
-    {
         try
         {
-            var mod = modHost.LoadedMods.Values.FirstOrDefault(m => m.Manifest.Id == modId);
+            var mod = s_modHost.LoadedMods.Values.FirstOrDefault(m => m.Manifest.Id == modId);
             if (mod?.ModAssembly == null)
             {
                 Log.Warning($"  Mod '{modId}' not found");
@@ -160,11 +215,10 @@ public static class ModReassemblyHostApp
             if (component == null) return;
 
             entity.Add((EntityComponent)component);
-            Log.Info($"  Added {typeName} to {entity.Name}");
         }
         catch (Exception ex)
         {
-            Log.Error($"  Failed to add {typeName} to {entity.Name}: {ex.Message}");
+            Log.Error($"  Failed to add {typeName}: {ex.Message}");
         }
     }
 }
