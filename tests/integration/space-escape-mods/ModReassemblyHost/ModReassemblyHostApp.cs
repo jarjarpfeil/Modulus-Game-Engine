@@ -1,10 +1,12 @@
-// ModReassemblyHostApp.cs — Full integration test: loads mods, creates test scene with mod components, runs game
+// ModReassemblyHostApp.cs — Full integration test: loads mods, creates test scene, runs game with visible window
 
 using Stride.Engine;
 using Stride.Engine.Modding;
 using Stride.Engine.Processors;
 using Stride.Core.Mathematics;
 using Stride.Core.Diagnostics;
+using Stride.Rendering;
+using Stride.Rendering.Lights;
 using SpaceEscape.Contracts;
 
 namespace ModReassemblyHost;
@@ -46,11 +48,11 @@ public static class ModReassemblyHostApp
 
                 Log.Info("=== Mod Reassembly Test Complete ===");
                 Log.Info("All mods loaded and test scene created successfully.");
-                Log.Info("The game is running. Close the window or press Escape to exit.");
+                Log.Info("The game window should be visible. Close it to exit.");
             }
             catch (Exception ex)
             {
-                Log.Error($"Failed to create test scene: {ex}");
+                Log.Error($"Failed: {ex}");
                 exitCode = 1;
                 game.Exit();
             }
@@ -69,7 +71,6 @@ public static class ModReassemblyHostApp
             return;
         }
 
-        // Create a fresh scene
         var scene = new Scene();
         var sceneInstance = new SceneInstance(game.Services, scene);
         sceneSystem.SceneInstance = sceneInstance;
@@ -90,13 +91,26 @@ public static class ModReassemblyHostApp
         scene.Entities.Add(camera);
         Log.Info("  Added Camera");
 
+        // ── Directional Light ──
+        var light = new Entity("Light")
+        {
+            new LightComponent
+            {
+                Type = new LightDirectional(),
+                Intensity = 1.0f,
+            },
+        };
+        light.Transform.Rotation = Quaternion.RotationX(-0.8f) * Quaternion.RotationY(0.5f);
+        scene.Entities.Add(light);
+        Log.Info("  Added Light");
+
         // ── Character entity with mod component ──
         TryAddModComponent(scene, modHost, "com.spaceescape.character",
             "ModCharacter.CharacterComponent", "Character", new Vector3(0, 0, 0));
 
         // ── Background entity with mod component ──
         TryAddModComponent(scene, modHost, "com.spaceescape.background",
-            "ModBackground.BackgroundInfoComponent", "Background", Vector3.Zero);
+            "ModBackground.BackgroundInfoComponent", "Background", new Vector3(0, -2, 0));
 
         // ── UI entity with mod component ──
         TryAddModComponent(scene, modHost, "com.spaceescape.ui",
@@ -113,7 +127,7 @@ public static class ModReassemblyHostApp
             var mod = modHost.LoadedMods.Values.FirstOrDefault(m => m.Manifest.Id == modId);
             if (mod?.ModAssembly == null)
             {
-                Log.Warning($"  Mod '{modId}' not found or has no assembly");
+                Log.Warning($"  Mod '{modId}' not found");
                 return;
             }
 
@@ -125,16 +139,10 @@ public static class ModReassemblyHostApp
             }
 
             var component = Activator.CreateInstance(componentType);
-            if (component == null)
-            {
-                Log.Warning($"  Failed to create instance of '{typeName}'");
-                return;
-            }
+            if (component == null) return;
 
             var entity = new Entity(entityName);
             entity.Transform.Position = position;
-
-            // Add the mod component to the entity
             entity.Add((EntityComponent)component);
             scene.Entities.Add(entity);
 
