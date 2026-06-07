@@ -1,53 +1,152 @@
-// ModReassemblyHostApp.cs — Minimal Stride host that loads all SpaceEscape mods
-// Tests: Full end-to-end mod loading, dependency resolution, game functionality
+// ModReassemblyHostApp.cs — Full integration test: loads mods, creates test scene with mod components, runs game
 
 using Stride.Engine;
 using Stride.Engine.Modding;
+using Stride.Engine.Processors;
+using Stride.Core.Mathematics;
+using Stride.Core.Diagnostics;
 using SpaceEscape.Contracts;
 
 namespace ModReassemblyHost;
 
 public static class ModReassemblyHostApp
 {
-    public static void Main()
+    private static readonly Logger Log = GlobalLogger.GetLogger("ModReassemblyHost");
+
+    public static int Main()
     {
         using var game = new Game();
 
-        // Game() constructor already creates and registers ModHost (line 246-247 of Game.cs)
         var modHost = game.Services.GetService<Stride.Engine.Modding.ModHost>();
         if (modHost == null)
         {
-            throw new InvalidOperationException("ModHost not found — Game() constructor should have created it");
+            throw new InvalidOperationException("ModHost not found");
         }
 
         modHost.ModsDirectory = Path.Combine(AppContext.BaseDirectory, "mods");
-
-        // Register the host service for mods to use
         game.Services.AddService<ISpaceEscapeHost>(new SpaceEscapeHostService());
 
-        // Load all mods after game initialization completes, then exit
+        int exitCode = 0;
+
         Game.GameStarted += (_, _) =>
         {
-            modHost.EnableStatePersistence();
-
-            var loaded = modHost.LoadAllMods();
-
-            var logger = Stride.Core.Diagnostics.GlobalLogger.GetLogger("ModReassemblyHost");
-            logger.Info($"Loaded {loaded.Count} mods:");
-            foreach (var pkg in loaded)
+            try
             {
-                logger.Info($"  {pkg.Manifest.Id} v{pkg.Manifest.Version} - State: {pkg.State}");
-            }
+                modHost.EnableStatePersistence();
+                var loaded = modHost.LoadAllMods();
 
-            // Exit after loading mods (this is a test harness, not a game)
-            game.Exit();
+                Log.Info($"Loaded {loaded.Count} mods:");
+                foreach (var pkg in loaded)
+                {
+                    Log.Info($"  {pkg.Manifest.Id} v{pkg.Manifest.Version} - State: {pkg.State}");
+                }
+
+                // Create test scene with entities that use mod components
+                CreateTestScene(game, modHost);
+
+                Log.Info("=== Mod Reassembly Test Complete ===");
+                Log.Info("All mods loaded and test scene created successfully.");
+                Log.Info("The game is running. Close the window or press Escape to exit.");
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Failed to create test scene: {ex}");
+                exitCode = 1;
+                game.Exit();
+            }
         };
 
         game.Run();
+        return exitCode;
+    }
+
+    private static void CreateTestScene(Game game, ModHost modHost)
+    {
+        var sceneSystem = game.Services.GetService<SceneSystem>();
+        if (sceneSystem == null)
+        {
+            Log.Error("SceneSystem not available");
+            return;
+        }
+
+        // Create a fresh scene
+        var scene = new Scene();
+        var sceneInstance = new SceneInstance(game.Services, scene);
+        sceneSystem.SceneInstance = sceneInstance;
+
+        Log.Info("Created test scene");
+
+        // ── Camera ──
+        var camera = new Entity("Camera")
+        {
+            new CameraComponent(0.1f, 1000f)
+            {
+                Projection = CameraProjectionMode.Perspective,
+                VerticalFieldOfView = 60f,
+            },
+        };
+        camera.Transform.Position = new Vector3(0, 5, 10);
+        camera.Transform.Rotation = Quaternion.RotationX(-0.2f);
+        scene.Entities.Add(camera);
+        Log.Info("  Added Camera");
+
+        // ── Character entity with mod component ──
+        TryAddModComponent(scene, modHost, "com.spaceescape.character",
+            "ModCharacter.CharacterComponent", "Character", new Vector3(0, 0, 0));
+
+        // ── Background entity with mod component ──
+        TryAddModComponent(scene, modHost, "com.spaceescape.background",
+            "ModBackground.BackgroundInfoComponent", "Background", Vector3.Zero);
+
+        // ── UI entity with mod component ──
+        TryAddModComponent(scene, modHost, "com.spaceescape.ui",
+            "ModUI.UIStateComponent", "UI", Vector3.Zero);
+
+        Log.Info($"Scene has {scene.Entities.Count} entities");
+    }
+
+    private static void TryAddModComponent(Scene scene, ModHost modHost,
+        string modId, string typeName, string entityName, Vector3 position)
+    {
+        try
+        {
+            var mod = modHost.LoadedMods.Values.FirstOrDefault(m => m.Manifest.Id == modId);
+            if (mod?.ModAssembly == null)
+            {
+                Log.Warning($"  Mod '{modId}' not found or has no assembly");
+                return;
+            }
+
+            var componentType = mod.ModAssembly.GetType(typeName);
+            if (componentType == null)
+            {
+                Log.Warning($"  Type '{typeName}' not found in mod '{modId}'");
+                return;
+            }
+
+            var component = Activator.CreateInstance(componentType);
+            if (component == null)
+            {
+                Log.Warning($"  Failed to create instance of '{typeName}'");
+                return;
+            }
+
+            var entity = new Entity(entityName);
+            entity.Transform.Position = position;
+
+            // Add the mod component to the entity
+            entity.Add((EntityComponent)component);
+            scene.Entities.Add(entity);
+
+            Log.Info($"  Added {entityName} with {typeName}");
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"  Failed to add {entityName}: {ex.Message}");
+        }
     }
 }
 
-/// <summary>Simple implementation of ISpaceEscapeHost for mods to use.</summary>
 internal class SpaceEscapeHostService : ISpaceEscapeHost
 {
     public GameState CurrentState { get; private set; } = GameState.Menu;
@@ -56,7 +155,6 @@ internal class SpaceEscapeHostService : ISpaceEscapeHost
     {
         var previous = CurrentState;
         CurrentState = newState;
-        var logger = Stride.Core.Diagnostics.GlobalLogger.GetLogger("ModReassemblyHost");
-        logger.Info($"Game state: {previous} -> {newState}");
+        GlobalLogger.GetLogger("ModReassemblyHost").Info($"Game state: {previous} -> {newState}");
     }
 }

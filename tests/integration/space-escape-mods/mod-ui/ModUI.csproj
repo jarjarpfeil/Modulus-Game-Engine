@@ -9,9 +9,19 @@
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\..\..\sources\engine\Modulus.Modding.Api\Modulus.Modding.Api.csproj" />
-    <ProjectReference Include="..\..\..\..\sources\engine\Stride.Engine\Stride.Engine.csproj" />
-    <ProjectReference Include="..\contracts\SpaceEscape.Contracts.csproj" />
+    <ProjectReference Include="..\..\..\..\sources\engine\Modulus.Modding.Api\Modulus.Modding.Api.csproj" PrivateAssets="all" />
+    <ProjectReference Include="..\..\..\..\sources\engine\Stride.Engine\Stride.Engine.csproj" PrivateAssets="all" />
+    <ProjectReference Include="..\contracts\SpaceEscape.Contracts.csproj" PrivateAssets="all" />
     <PackageReference Include="Stride.UI" PrivateAssets="contentfiles;analyzers" />
   </ItemGroup>
+  <!-- Prevent Stride DLLs from being copied to mod output — they come from the engine's ALC -->
+  <Target Name="RemoveStrideDlls" AfterTargets="Build">
+    <ItemGroup>
+      <!-- Remove all Stride.*.dll except Stride.dll itself (native interop) -->
+      <StrideDlls Include="$(OutputPath)Stride.*.dll" Exclude="$(OutputPath)Stride.dll" />
+      <StridePdbs Include="$(OutputPath)Stride.*.pdb" />
+    </ItemGroup>
+    <Delete Files="@(StrideDlls)" />
+    <Delete Files="@(StridePdbs)" />
+  </Target>
 </Project>
