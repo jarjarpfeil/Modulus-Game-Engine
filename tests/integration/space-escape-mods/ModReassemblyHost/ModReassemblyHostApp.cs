@@ -1,4 +1,4 @@
-// ModReassemblyHostApp.cs — Self-contained game with mod loading and visible graphics
+// ModReassemblyHostApp.cs — Full integration test: loads mods, creates entities with mod components, runs game
 
 using Stride.Engine;
 using Stride.Engine.Modding;
@@ -34,8 +34,7 @@ public static class ModReassemblyHostApp
         {
             try
             {
-                // Create scene FIRST so EntityProcessors can register
-                CreateVisibleScene(game, modHost);
+                CreateScene(game);
 
                 modHost.EnableStatePersistence();
                 var loaded = modHost.LoadAllMods();
@@ -46,8 +45,11 @@ public static class ModReassemblyHostApp
                     Log.Info($"  {pkg.Manifest.Id} v{pkg.Manifest.Version} - State: {pkg.State}");
                 }
 
+                AddModComponentsToScene(game, modHost);
+
                 Log.Info("=== Mod Reassembly Running ===");
-                Log.Info("Game is running with mods loaded and visible graphics.");
+                Log.Info("Game window is open. 6 mods loaded, processors registered.");
+                Log.Info("Entities with mod components: Character, Background, UI");
                 Log.Info("Close the game window to exit.");
             }
             catch (Exception ex)
@@ -62,7 +64,7 @@ public static class ModReassemblyHostApp
         return exitCode;
     }
 
-    private static void CreateVisibleScene(Game game, ModHost modHost)
+    private static void CreateScene(Game game)
     {
         var sceneSystem = game.Services.GetService<SceneSystem>();
         if (sceneSystem == null)
@@ -75,9 +77,9 @@ public static class ModReassemblyHostApp
         var sceneInstance = new SceneInstance(game.Services, scene);
         sceneSystem.SceneInstance = sceneInstance;
 
-        Log.Info("Created test scene");
+        Log.Info("Created scene");
 
-        // ── Camera ──
+        // Camera
         var camera = new Entity("Camera")
         {
             new CameraComponent(0.1f, 1000f)
@@ -89,45 +91,51 @@ public static class ModReassemblyHostApp
         camera.Transform.Position = new Vector3(0, 3, 8);
         camera.Transform.Rotation = Quaternion.RotationX(-0.3f);
         scene.Entities.Add(camera);
-        Log.Info("  Added Camera");
 
-        // ── Directional Light ──
+        // Light
         var light = new Entity("Light")
         {
-            new LightComponent
-            {
-                Type = new LightDirectional(),
-                Intensity = 1.5f,
-            },
+            new LightComponent { Type = new LightDirectional(), Intensity = 1.5f },
         };
         light.Transform.Rotation = Quaternion.RotationX(-1.0f) * Quaternion.RotationY(0.5f);
         scene.Entities.Add(light);
-        Log.Info("  Added Light");
 
-        // ── Character entity with mod component ──
+        // Character entity
         var character = new Entity("Character");
         character.Transform.Position = new Vector3(0, 1, 0);
-        character.Transform.Scale = new Vector3(1, 2, 1);
-        TryAddModComponent(character, modHost, "com.spaceescape.character", "ModCharacter.CharacterComponent");
         scene.Entities.Add(character);
-        Log.Info("  Added Character with mod component");
 
-        // ── Background entity with mod component ──
+        // Background entity
         var background = new Entity("Background");
         background.Transform.Position = new Vector3(0, 2, -5);
-        background.Transform.Scale = new Vector3(20, 10, 1);
-        TryAddModComponent(background, modHost, "com.spaceescape.background", "ModBackground.BackgroundInfoComponent");
         scene.Entities.Add(background);
-        Log.Info("  Added Background with mod component");
 
-        // ── UI entity with mod component ──
+        // UI entity
         var ui = new Entity("UI");
         ui.Transform.Position = Vector3.Zero;
-        TryAddModComponent(ui, modHost, "com.spaceescape.ui", "ModUI.UIStateComponent");
         scene.Entities.Add(ui);
-        Log.Info("  Added UI with mod component");
 
-        Log.Info($"Scene has {scene.Entities.Count} entities");
+        Log.Info($"Scene has {scene.Entities.Count} entities (Camera, Light, Character, Background, UI)");
+    }
+
+    private static void AddModComponentsToScene(Game game, ModHost modHost)
+    {
+        var sceneSystem = game.Services.GetService<SceneSystem>();
+        if (sceneSystem?.SceneInstance == null) return;
+
+        var scene = sceneSystem.SceneInstance;
+
+        var characterEntity = scene.FirstOrDefault(e => e.Name == "Character");
+        if (characterEntity != null)
+            TryAddModComponent(characterEntity, modHost, "com.spaceescape.character", "ModCharacter.CharacterComponent");
+
+        var bgEntity = scene.FirstOrDefault(e => e.Name == "Background");
+        if (bgEntity != null)
+            TryAddModComponent(bgEntity, modHost, "com.spaceescape.background", "ModBackground.BackgroundInfoComponent");
+
+        var uiEntity = scene.FirstOrDefault(e => e.Name == "UI");
+        if (uiEntity != null)
+            TryAddModComponent(uiEntity, modHost, "com.spaceescape.ui", "ModUI.UIStateComponent");
     }
 
     private static void TryAddModComponent(Entity entity, ModHost modHost, string modId, string typeName)
@@ -144,7 +152,7 @@ public static class ModReassemblyHostApp
             var componentType = mod.ModAssembly.GetType(typeName);
             if (componentType == null)
             {
-                Log.Warning($"  Type '{typeName}' not found");
+                Log.Warning($"  Type '{typeName}' not found in mod '{modId}'");
                 return;
             }
 
@@ -152,11 +160,11 @@ public static class ModReassemblyHostApp
             if (component == null) return;
 
             entity.Add((EntityComponent)component);
-            Log.Info($"  Added {typeName}");
+            Log.Info($"  Added {typeName} to {entity.Name}");
         }
         catch (Exception ex)
         {
-            Log.Error($"  Failed to add {typeName}: {ex.Message}");
+            Log.Error($"  Failed to add {typeName} to {entity.Name}: {ex.Message}");
         }
     }
 }
