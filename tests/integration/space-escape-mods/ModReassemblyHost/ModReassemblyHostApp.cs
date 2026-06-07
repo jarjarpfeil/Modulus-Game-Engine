@@ -34,6 +34,9 @@ public static class ModReassemblyHostApp
         {
             try
             {
+                // Create scene FIRST so EntityProcessors can register
+                CreateVisibleScene(game, modHost);
+
                 modHost.EnableStatePersistence();
                 var loaded = modHost.LoadAllMods();
 
@@ -42,8 +45,6 @@ public static class ModReassemblyHostApp
                 {
                     Log.Info($"  {pkg.Manifest.Id} v{pkg.Manifest.Version} - State: {pkg.State}");
                 }
-
-                CreateVisibleScene(game, modHost);
 
                 Log.Info("=== Mod Reassembly Running ===");
                 Log.Info("Game is running with mods loaded and visible graphics.");
