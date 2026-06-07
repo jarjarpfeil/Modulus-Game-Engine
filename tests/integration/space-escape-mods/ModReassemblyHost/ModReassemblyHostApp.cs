@@ -1,5 +1,4 @@
-// ModReassemblyHostApp.cs — Mod reassembly host with scene selection
-// Loads mods and lets the user pick which scene to test them in
+// ModReassemblyHostApp.cs — Full game with visible meshes and mod components
 
 using Stride.Engine;
 using Stride.Engine.Modding;
@@ -8,7 +7,9 @@ using Stride.Core.Mathematics;
 using Stride.Core.Diagnostics;
 using Stride.Rendering;
 using Stride.Rendering.Lights;
-using Stride.Input;
+using Stride.Rendering.Materials;
+using Stride.Rendering.Materials.ComputeColors;
+using Stride.Graphics;
 using SpaceEscape.Contracts;
 
 namespace ModReassemblyHost;
@@ -16,221 +17,222 @@ namespace ModReassemblyHost;
 public static class ModReassemblyHostApp
 {
     private static readonly Logger Log = GlobalLogger.GetLogger("ModReassemblyHost");
-    private static ModHost? s_modHost;
-    private static int s_currentSceneIndex;
-    private static readonly string[] s_sceneNames = { "Empty Scene", "Character Test", "Background Test", "Full Test" };
 
     public static int Main()
     {
         using var game = new Game();
 
-        var modHost = game.Services.GetService<Stride.Engine.Modding.ModHost>();
+        var modHost = game.Services.GetService<ModHost>();
         if (modHost == null)
-        {
-            Log.Error("ModHost not found — engine initialization failed");
-            return 1;
-        }
+            throw new InvalidOperationException("ModHost not found");
 
-        s_modHost = modHost;
         modHost.ModsDirectory = Path.Combine(AppContext.BaseDirectory, "mods");
         game.Services.AddService<ISpaceEscapeHost>(new SpaceEscapeHostService());
 
-        // Discover mods
-        var discovered = modHost.DiscoverMods();
-        Log.Info($"Discovered {discovered.Count} mods:");
-        foreach (var pkg in discovered)
-        {
-            Log.Info($"  {pkg.Manifest.Id} v{pkg.Manifest.Version}");
-        }
-
-        // Load mods
-        modHost.EnableStatePersistence();
-        var loaded = modHost.LoadAllMods();
-        Log.Info($"Loaded {loaded.Count} mods");
-
-        // Subscribe to game started
-        Game.GameStarted += (_, _) =>
-        {
-            LoadScene(game, s_currentSceneIndex);
-            Log.Info("=== Controls ===");
-            Log.Info("  F1-F4: Switch scenes");
-            Log.Info("  Escape: Exit");
-        };
-
-        // Handle input for scene switching
-        var input = game.Services.GetService<InputManager>();
-        if (input != null)
-        {
-            // Scene switching handled in update loop
-        }
+        // Create a minimal scene with a bootstrap script
+        // The script runs on the first Update() when GraphicsDevice exists
+        var bootstrapScene = new Scene();
+        var bootstrapEntity = new Entity("Bootstrap");
+        bootstrapEntity.Add(new SceneBootstrapScript());
+        bootstrapScene.Entities.Add(bootstrapEntity);
+        game.SceneSystem.SceneInstance = new SceneInstance(game.Services, bootstrapScene);
 
         game.Run();
         return 0;
     }
+}
 
-    private static void LoadScene(Game game, int sceneIndex)
+/// <summary>
+/// SyncScript that runs once on first Update to load mods and create the visible scene.
+/// Attached to a root entity created before game.Run().
+/// </summary>
+public class SceneBootstrapScript : SyncScript
+{
+    private bool _initialized;
+
+    public override void Update()
     {
-        var sceneSystem = game.Services.GetService<SceneSystem>();
-        if (sceneSystem == null) return;
+        if (_initialized) return;
+        _initialized = true;
 
-        s_currentSceneIndex = sceneIndex;
-        Scene scene;
+        var modHost = Services.GetService<ModHost>();
+        var graphicsDevice = Game.GraphicsDevice;
+        var logger = GlobalLogger.GetLogger("ModReassemblyHost");
 
-        switch (sceneIndex)
+        if (modHost == null || graphicsDevice == null)
         {
-            case 0:
-                scene = CreateEmptyScene();
-                break;
-            case 1:
-                scene = CreateCharacterTestScene();
-                break;
-            case 2:
-                scene = CreateBackgroundTestScene();
-                break;
-            case 3:
-            default:
-                scene = CreateFullTestScene();
-                break;
+            logger.Error("ModHost or GraphicsDevice not available");
+            return;
         }
 
-        var sceneInstance = new SceneInstance(game.Services, scene);
-        sceneSystem.SceneInstance = sceneInstance;
+        modHost.EnableStatePersistence();
+        var loaded = modHost.LoadAllMods();
+        logger.Info($"Loaded {loaded.Count} mods:");
+        foreach (var pkg in loaded)
+            logger.Info($"  {pkg.Manifest.Id} v{pkg.Manifest.Version} - State: {pkg.State}");
 
-        Log.Info($"Loaded scene: {s_sceneNames[sceneIndex]} ({scene.Entities.Count} entities)");
+        CreateVisibleScene(modHost, graphicsDevice, logger);
+        logger.Info("=== Mod Reassembly Running ===");
+        logger.Info("Game window should show colored cubes with mod components attached.");
     }
 
-    private static Scene CreateBaseScene()
+    private void CreateVisibleScene(ModHost modHost, GraphicsDevice graphicsDevice, Logger logger)
     {
-        var scene = new Scene();
+        var scene = Entity.Scene;
 
-        // Camera
-        var camera = new Entity("Camera")
+        // ── Camera ──
+        var camera = new Entity("Camera");
+        camera.Transform.Position = new Vector3(0, 4, 8);
+        camera.Transform.Rotation = Quaternion.RotationX(-0.35f);
+        camera.Add(new CameraComponent(0.1f, 1000f)
         {
-            new CameraComponent(0.1f, 1000f)
-            {
-                Projection = CameraProjectionMode.Perspective,
-                VerticalFieldOfView = 60f,
-            },
-        };
-        camera.Transform.Position = new Vector3(0, 5, 10);
-        camera.Transform.Rotation = Quaternion.RotationX(-0.2f);
+            Projection = CameraProjectionMode.Perspective,
+            VerticalFieldOfView = 55f,
+        });
         scene.Entities.Add(camera);
 
-        // Light
-        var light = new Entity("Light")
-        {
-            new LightComponent
-            {
-                Type = new LightDirectional(),
-                Intensity = 1.5f,
-            },
-        };
+        // ── Directional Light ──
+        var light = new Entity("Light");
         light.Transform.Rotation = Quaternion.RotationX(-1.0f) * Quaternion.RotationY(0.5f);
+        light.Add(new LightComponent { Type = new LightDirectional(), Intensity = 2.0f });
         scene.Entities.Add(light);
 
-        return scene;
-    }
+        // ── Ground (green cube, flat) ──
+        AddColoredCube(scene, "Ground", new Vector3(0, -0.5f, 0), new Vector3(10, 1, 10),
+            new Color4(0.3f, 0.7f, 0.3f, 1f), graphicsDevice);
 
-    private static Scene CreateEmptyScene()
-    {
-        return CreateBaseScene();
-    }
+        // ── Character (red cube, tall) ──
+        var character = AddColoredCube(scene, "Character", new Vector3(0, 1, 0), new Vector3(1, 2, 1),
+            new Color4(0.9f, 0.2f, 0.2f, 1f), graphicsDevice);
+        TryAddModComponent(character, modHost, "com.spaceescape.character", "ModCharacter.CharacterComponent", logger);
 
-    private static Scene CreateCharacterTestScene()
-    {
-        var scene = CreateBaseScene();
+        // ── Background wall (blue, wide) ──
+        var background = AddColoredCube(scene, "Background", new Vector3(0, 2, -6), new Vector3(16, 6, 0.5f),
+            new Color4(0.15f, 0.25f, 0.6f, 1f), graphicsDevice);
+        TryAddModComponent(background, modHost, "com.spaceescape.background", "ModBackground.BackgroundInfoComponent", logger);
 
-        // Character entity with mod component
-        var character = new Entity("Character");
-        character.Transform.Position = new Vector3(0, 1, 0);
-        TryAddModComponent(character, "com.spaceescape.character", "ModCharacter.CharacterComponent");
-        scene.Entities.Add(character);
-        Log.Info("  Added Character with CharacterComponent");
+        // ── Obstacle 1 (orange) ──
+        AddColoredCube(scene, "Obstacle1", new Vector3(-3, 1, -3), new Vector3(1.5f, 2, 1.5f),
+            new Color4(1f, 0.5f, 0.1f, 1f), graphicsDevice);
 
-        return scene;
-    }
+        // ── Obstacle 2 (yellow) ──
+        AddColoredCube(scene, "Obstacle2", new Vector3(3, 0.75f, -2), new Vector3(1.5f, 1.5f, 1.5f),
+            new Color4(1f, 0.9f, 0.1f, 1f), graphicsDevice);
 
-    private static Scene CreateBackgroundTestScene()
-    {
-        var scene = CreateBaseScene();
-
-        // Background entity with mod component
-        var background = new Entity("Background");
-        background.Transform.Position = new Vector3(0, 0, -5);
-        TryAddModComponent(background, "com.spaceescape.background", "ModBackground.BackgroundInfoComponent");
-        scene.Entities.Add(background);
-        Log.Info("  Added Background with BackgroundInfoComponent");
-
-        return scene;
-    }
-
-    private static Scene CreateFullTestScene()
-    {
-        var scene = CreateBaseScene();
-
-        // Character
-        var character = new Entity("Character");
-        character.Transform.Position = new Vector3(0, 1, 0);
-        TryAddModComponent(character, "com.spaceescape.character", "ModCharacter.CharacterComponent");
-        scene.Entities.Add(character);
-
-        // Background
-        var background = new Entity("Background");
-        background.Transform.Position = new Vector3(0, 0, -5);
-        TryAddModComponent(background, "com.spaceescape.background", "ModBackground.BackgroundInfoComponent");
-        scene.Entities.Add(background);
-
-        // UI
+        // ── UI entity ──
         var ui = new Entity("UI");
-        ui.Transform.Position = Vector3.Zero;
-        TryAddModComponent(ui, "com.spaceescape.ui", "ModUI.UIStateComponent");
+        TryAddModComponent(ui, modHost, "com.spaceescape.ui", "ModUI.UIStateComponent", logger);
         scene.Entities.Add(ui);
 
-        Log.Info("  Added Character + Background + UI with mod components");
-
-        return scene;
+        logger.Info($"Scene ready: {scene.Entities.Count} entities");
     }
 
-    private static void TryAddModComponent(Entity entity, string modId, string typeName)
+    private static Entity AddColoredCube(Scene scene, string name, Vector3 position, Vector3 scale,
+        Color4 color, GraphicsDevice graphicsDevice)
     {
-        if (s_modHost == null) return;
+        var model = new Model();
+        model.Meshes.Add(CreateCubeMesh(graphicsDevice));
+        model.Materials.Add(new MaterialInstance(CreateMaterial(graphicsDevice, color)));
 
+        var entity = new Entity(name);
+        entity.Transform.Position = position;
+        entity.Transform.Scale = scale;
+        entity.Add(new ModelComponent(model));
+        scene.Entities.Add(entity);
+        return entity;
+    }
+
+    private static Mesh CreateCubeMesh(GraphicsDevice graphicsDevice)
+    {
+        var vertices = new VertexPositionNormalTexture[]
+        {
+            new(new Vector3(-0.5f, -0.5f,  0.5f), Vector3.UnitZ, Vector2.Zero),
+            new(new Vector3( 0.5f, -0.5f,  0.5f), Vector3.UnitZ, Vector2.UnitX),
+            new(new Vector3( 0.5f,  0.5f,  0.5f), Vector3.UnitZ, Vector2.One),
+            new(new Vector3(-0.5f,  0.5f,  0.5f), Vector3.UnitZ, Vector2.UnitY),
+            new(new Vector3( 0.5f, -0.5f, -0.5f), -Vector3.UnitZ, Vector2.Zero),
+            new(new Vector3(-0.5f, -0.5f, -0.5f), -Vector3.UnitZ, Vector2.UnitX),
+            new(new Vector3(-0.5f,  0.5f, -0.5f), -Vector3.UnitZ, Vector2.One),
+            new(new Vector3( 0.5f,  0.5f, -0.5f), -Vector3.UnitZ, Vector2.UnitY),
+            new(new Vector3(-0.5f,  0.5f,  0.5f), Vector3.UnitY, Vector2.Zero),
+            new(new Vector3( 0.5f,  0.5f,  0.5f), Vector3.UnitY, Vector2.UnitX),
+            new(new Vector3( 0.5f,  0.5f, -0.5f), Vector3.UnitY, Vector2.One),
+            new(new Vector3(-0.5f,  0.5f, -0.5f), Vector3.UnitY, Vector2.UnitY),
+            new(new Vector3(-0.5f, -0.5f, -0.5f), -Vector3.UnitY, Vector2.Zero),
+            new(new Vector3( 0.5f, -0.5f, -0.5f), -Vector3.UnitY, Vector2.UnitX),
+            new(new Vector3( 0.5f, -0.5f,  0.5f), -Vector3.UnitY, Vector2.One),
+            new(new Vector3(-0.5f, -0.5f,  0.5f), -Vector3.UnitY, Vector2.UnitY),
+            new(new Vector3( 0.5f, -0.5f,  0.5f), Vector3.UnitX, Vector2.Zero),
+            new(new Vector3( 0.5f, -0.5f, -0.5f), Vector3.UnitX, Vector2.UnitX),
+            new(new Vector3( 0.5f,  0.5f, -0.5f), Vector3.UnitX, Vector2.One),
+            new(new Vector3( 0.5f,  0.5f,  0.5f), Vector3.UnitX, Vector2.UnitY),
+            new(new Vector3(-0.5f, -0.5f, -0.5f), -Vector3.UnitX, Vector2.Zero),
+            new(new Vector3(-0.5f, -0.5f,  0.5f), -Vector3.UnitX, Vector2.UnitX),
+            new(new Vector3(-0.5f,  0.5f,  0.5f), -Vector3.UnitX, Vector2.One),
+            new(new Vector3(-0.5f,  0.5f, -0.5f), -Vector3.UnitX, Vector2.UnitY),
+        };
+
+        var indices = new ushort[]
+        {
+            0,1,2, 0,2,3, 4,5,6, 4,6,7, 8,9,10, 8,10,11,
+            12,13,14, 12,14,15, 16,17,18, 16,18,19, 20,21,22, 20,22,23,
+        };
+
+        var vbo = Stride.Graphics.Buffer.Vertex.New(graphicsDevice, vertices);
+        var ibo = Stride.Graphics.Buffer.Index.New(graphicsDevice, indices);
+
+        return new Mesh
+        {
+            Draw = new MeshDraw
+            {
+                StartLocation = 0,
+                PrimitiveType = PrimitiveType.TriangleList,
+                VertexBuffers = new[] { new VertexBufferBinding(vbo, VertexPositionNormalTexture.Layout, vertices.Length) },
+                IndexBuffer = new IndexBufferBinding(ibo, false, indices.Length),
+            }
+        };
+    }
+
+    private static Material CreateMaterial(GraphicsDevice graphicsDevice, Color4 color)
+    {
+        var diffuseColor = new ComputeColor { Value = color };
+        var descriptor = new MaterialDescriptor
+        {
+            Attributes = new MaterialAttributes
+            {
+                Diffuse = new MaterialDiffuseMapFeature(diffuseColor),
+                DiffuseModel = new MaterialDiffuseLambertModelFeature(),
+            }
+        };
+        return Material.New(graphicsDevice, descriptor);
+    }
+
+    private static void TryAddModComponent(Entity entity, ModHost modHost, string modId, string typeName, Logger logger)
+    {
         try
         {
-            var mod = s_modHost.LoadedMods.Values.FirstOrDefault(m => m.Manifest.Id == modId);
-            if (mod?.ModAssembly == null)
-            {
-                Log.Warning($"  Mod '{modId}' not found");
-                return;
-            }
+            var mod = modHost.LoadedMods.Values.FirstOrDefault(m => m.Manifest.Id == modId);
+            if (mod?.ModAssembly == null) { logger.Warning($"  Mod '{modId}' not found"); return; }
 
             var componentType = mod.ModAssembly.GetType(typeName);
-            if (componentType == null)
-            {
-                Log.Warning($"  Type '{typeName}' not found in mod '{modId}'");
-                return;
-            }
+            if (componentType == null) { logger.Warning($"  Type '{typeName}' not found"); return; }
 
             var component = Activator.CreateInstance(componentType);
             if (component == null) return;
 
             entity.Add((EntityComponent)component);
+            logger.Info($"  Added {typeName} to {entity.Name}");
         }
-        catch (Exception ex)
-        {
-            Log.Error($"  Failed to add {typeName}: {ex.Message}");
-        }
+        catch (Exception ex) { logger.Error($"  Failed to add {typeName}: {ex.Message}"); }
     }
 }
 
 internal class SpaceEscapeHostService : ISpaceEscapeHost
 {
     public GameState CurrentState { get; private set; } = GameState.Menu;
-
     public void RequestStateChange(GameState newState)
     {
-        var previous = CurrentState;
         CurrentState = newState;
-        GlobalLogger.GetLogger("ModReassemblyHost").Info($"Game state: {previous} -> {newState}");
+        GlobalLogger.GetLogger("ModReassemblyHost").Info($"Game state: {newState}");
     }
 }
