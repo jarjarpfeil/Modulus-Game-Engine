@@ -29,6 +29,10 @@ public static class ModDiscovery
     /// <returns>List of discovered ModPackage instances (not yet loaded).</returns>
     public static List<ModPackage> Discover(string modsDirectory)
     {
+        // Ensure absolute path — LoadFromAssemblyPath requires it
+        if (!Path.IsPathRooted(modsDirectory))
+            modsDirectory = Path.GetFullPath(modsDirectory);
+
         lock (_cacheLock)
         {
             if (_discoveryCache.TryGetValue(modsDirectory, out var cached))

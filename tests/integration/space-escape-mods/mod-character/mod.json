@@ -13,6 +13,9 @@
     }
   ],
   "systems": [],
+  "dependencies": [
+    { "id": "com.spaceescape.assets", "minVersion": "1.0.0", "optional": false }
+  ],
   "assets": [],
   "loadOrder": 10,
   "tags": ["spaceescape", "character", "integration-test"],

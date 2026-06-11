@@ -1,0 +1,103 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build-engine",
+      "type": "shell",
+      "command": "dotnet",
+      "args": [
+        "build",
+        "build/Stride.sln",
+        "-p:StrideNativeWindowsArm64Enabled=false"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": "$msCompile",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "group": "build"
+    },
+    {
+      "label": "build-engine-incremental",
+      "type": "shell",
+      "command": "dotnet",
+      "args": [
+        "build",
+        "build/Stride.sln",
+        "--no-restore",
+        "-p:StrideNativeWindowsArm64Enabled=false"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": "$msCompile",
+      "group": "build"
+    },
+    {
+      "label": "build-mcp",
+      "type": "shell",
+      "command": "dotnet",
+      "args": [
+        "build",
+        "tools/ModulusEngine.MCPServer/ModulusEngine.MCPServer.csproj",
+        "-p:StrideNativeWindowsArm64Enabled=false"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": "$msCompile",
+      "group": "build"
+    },
+    {
+      "label": "test-engine",
+      "type": "shell",
+      "command": "dotnet",
+      "args": [
+        "test",
+        "build/Stride.Tests.Simple.slnf",
+        "-p:StrideNativeWindowsArm64Enabled=false",
+        "--no-build"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": "$msCompile",
+      "group": "test"
+    },
+    {
+      "label": "test-modding",
+      "type": "shell",
+      "command": "dotnet",
+      "args": [
+        "test",
+        "build/Stride.Tests.Simple.slnf",
+        "-p:StrideNativeWindowsArm64Enabled=false",
+        "--no-build",
+        "--filter:FullyQualifiedName~Modding"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": "$msCompile",
+      "group": "test"
+    },
+    {
+      "label": "clean-ssdeps",
+      "type": "shell",
+      "command": "find",
+      "args": [
+        ".",
+        "-name",
+        "*.ssdeps",
+        "-delete"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": "build"
+    }
+  ]
+}

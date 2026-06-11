@@ -1,0 +1,8 @@
+- name: Writing a Mod
+  href: writing-a-mod.md
+- name: Mod API Reference
+  href: mod-api-reference.md
+- name: Cross-Game Mods
+  href: cross-game-mods.md
+- name: Architecture
+  href: architecture.md

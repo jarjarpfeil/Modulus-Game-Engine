@@ -19,8 +19,8 @@ namespace Stride.Engine.Modding;
 ///
 /// Integrates ModContentManager for asset resolution, ModEventBus for inter-mod
 /// communication, ModLifecycleManager for ALC cleanup, ModExceptionHandler for
-/// crash safety, ModShaderManager for shader extraction, and ModStateStore for
-/// state persistence.
+/// crash safety, ModShaderManager for shader extraction, ModSceneManager for
+/// scene discovery/loading, and ModStateStore for state persistence.
 /// </summary>
 public class ModHost
 {
@@ -37,6 +37,7 @@ public class ModHost
     private readonly ModExceptionHandler _exceptionHandler;
     private readonly ModShaderManager _shaderManager;
     private readonly OrphanComponentHandler _orphanHandler;
+    private readonly ModSceneManager _sceneManager;
     private ModStateStore? _stateStore;
 
     /// <summary>Path to the mods/ directory. Defaults to "mods" relative to game content.</summary>
@@ -63,6 +64,9 @@ public class ModHost
     /// <summary>The orphan component handler for save-compatible mod uninstall.</summary>
     public OrphanComponentHandler OrphanHandler => _orphanHandler;
 
+    /// <summary>The scene manager for mod scene discovery, catalog queries, and loading.</summary>
+    public ModSceneManager SceneManager => _sceneManager;
+
     /// <summary>The state store for mod persistence, or null if not enabled.</summary>
     public ModStateStore? StateStore => _stateStore;
 
@@ -77,6 +81,7 @@ public class ModHost
         _exceptionHandler = new ModExceptionHandler();
         _shaderManager = new ModShaderManager();
         _orphanHandler = new OrphanComponentHandler();
+        _sceneManager = new ModSceneManager(services);
         
         // Connect EffectSystem if available (for shader registration)
         var effectSystem = services.GetService<Rendering.EffectSystem>();
@@ -241,6 +246,9 @@ public class ModHost
         // Register mod shaders
         _shaderManager.RegisterModShaders(manifest.Id, manifest);
 
+        // Register mod scenes (catalog + behavior)
+        _sceneManager.RegisterModScenes(package);
+
         // Load and initialize the entry point (IMod) — crash-safe via ModExceptionHandler
         if (manifest.EntryPoint != null && package.ModAssembly != null)
         {
@@ -393,6 +401,9 @@ public class ModHost
 
         // Unregister mod content (removes GUID mappings too)
         _contentManager.UnregisterModContent(package);
+
+        // Unregister mod scenes (unloads any loaded mod scenes)
+        _sceneManager.UnregisterModScenes(modId);
 
         // Wire OrphanComponentHandler: Check for re-hydration opportunities
         if (package.ModAssembly != null)

@@ -1,0 +1,41 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Launch Game Studio (WPF)",
+      "type": "coreclr",
+      "request": "launch",
+      "program": "${workspaceFolder}/sources/editor/Stride.GameStudio/bin/Debug/net10.0-windows/Stride.GameStudio.dll",
+      "cwd": "${workspaceFolder}/sources/editor/Stride.GameStudio/bin/Debug/net10.0-windows",
+      "preLaunchTask": "build-engine",
+      "env": {
+        "DOTNET_NOLOGO": "1"
+      }
+    },
+    {
+      "name": "Launch MCP Server",
+      "type": "coreclr",
+      "request": "launch",
+      "program": "${workspaceFolder}/tools/ModulusEngine.MCPServer/bin/Debug/net10.0/ModulusEngine.MCPServer.dll",
+      "cwd": "${workspaceFolder}/tools/ModulusEngine.MCPServer/bin/Debug/net10.0",
+      "preLaunchTask": "build-mcp",
+      "env": {
+        "DOTNET_NOLOGO": "1"
+      }
+    },
+    {
+      "name": "Run Modding Tests",
+      "type": "shell",
+      "request": "launch",
+      "command": "dotnet",
+      "args": [
+        "test",
+        "${workspaceFolder}/build/Stride.Tests.Simple.slnf",
+        "-p:StrideNativeWindowsArm64Enabled=false",
+        "--no-build",
+        "--filter:FullyQualifiedName~Modding"
+      ],
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}

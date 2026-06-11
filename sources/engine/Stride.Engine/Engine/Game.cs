@@ -283,6 +283,11 @@ namespace Stride.Engine
                 databaseFileProvider = InitializeAssetDatabase();
                 ((DatabaseFileProviderService)Services.GetService<IDatabaseFileProviderService>()).FileProvider = databaseFileProvider;
 
+                // Register game provider with ModContentManager for cross-mod asset resolution
+                // Note: ModHost property is not set yet (Initialize() runs after PrepareContext()),
+                // so resolve directly from Services.
+                Services.GetService<ModHost>()?.ContentManager.RegisterGameProvider(databaseFileProvider);
+
                 var renderingSettings = new RenderingSettings();
                 if (Content.Exists(GameSettings.AssetUrl))
                 {
@@ -423,6 +428,9 @@ namespace Stride.Engine
                 ModHost.RegisterService();
             }
             ModHost.EnableStatePersistence();
+
+            // Auto-discover and load mods on first frame (no game code required)
+            GameSystems.Add(new Modding.ModAutoLoadSystem(Services));
 
             // TODO: data-driven?
             Content.Serializer.RegisterSerializer(new ImageSerializer());

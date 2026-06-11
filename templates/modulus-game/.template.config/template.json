@@ -1,0 +1,29 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "Modulus Engine Contributors",
+  "classifications": ["Game", "Modulus", "Console"],
+  "identity": "ModulusEngine.GameTemplate.CSharp",
+  "name": "Modulus Engine Game",
+  "shortName": "modulus-game",
+  "sourceName": "ModulusGame",
+  "preferNameDirectory": true,
+  "tags": {
+    "language": "C#",
+    "type": "project"
+  },
+  "symbols": {
+    "framework": {
+      "type": "parameter",
+      "description": "The target framework for the project.",
+      "datatype": "choice",
+      "choices": [
+        {
+          "choice": "net10.0",
+          "description": "Target .NET 10"
+        }
+      ],
+      "defaultValue": "net10.0",
+      "replaces": "net10.0"
+    }
+  }
+}

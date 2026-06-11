@@ -2,6 +2,7 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 using System.Text.Json;
+using Modulus.Modding.Api;
 using Stride.Engine.Modding;
 using Xunit;
 
@@ -36,6 +37,12 @@ public class ModManifestTests
             "shaders": [
                 { "name": "CustomPBR", "path": "shaders/custom-pbr.sdbundle" }
             ],
+            "scenes": [
+                { "path": "assets/DungeonLevel", "name": "Dark Dungeon", "behavior": "additive" },
+                { "path": "assets/BossArena", "name": "Boss Arena", "behavior": "replace" },
+                { "path": "assets/HubWorld" },
+                { "path": "assets/BackgroundWorld", "behavior": "background" }
+            ],
             "loadOrder": 200,
             "tags": ["gameplay", "health"],
             "type": "standard"
@@ -66,6 +73,24 @@ public class ModManifestTests
         Assert.Equal(200, manifest.LoadOrder);
         Assert.Contains("gameplay", manifest.Tags);
         Assert.Equal("standard", manifest.Type);
+
+        // Scene declarations
+        Assert.Equal(4, manifest.Scenes.Count);
+        Assert.Equal("assets/DungeonLevel", manifest.Scenes[0].Path);
+        Assert.Equal("Dark Dungeon", manifest.Scenes[0].Name);
+        Assert.Equal("additive", manifest.Scenes[0].Behavior);
+        Assert.Equal(ModSceneLoadBehavior.Additive, manifest.Scenes[0].ParsedBehavior);
+
+        Assert.Equal("assets/BossArena", manifest.Scenes[1].Path);
+        Assert.Equal(ModSceneLoadBehavior.Replace, manifest.Scenes[1].ParsedBehavior);
+
+        // No behavior = MenuSelect
+        Assert.Equal("assets/HubWorld", manifest.Scenes[2].Path);
+        Assert.Null(manifest.Scenes[2].Behavior);
+        Assert.Equal(ModSceneLoadBehavior.MenuSelect, manifest.Scenes[2].ParsedBehavior);
+
+        Assert.Equal("assets/BackgroundWorld", manifest.Scenes[3].Path);
+        Assert.Equal(ModSceneLoadBehavior.Background, manifest.Scenes[3].ParsedBehavior);
     }
 
     [Fact]
@@ -131,5 +156,57 @@ public class ModManifestTests
     {
         // "null" JSON should throw
         Assert.Throws<InvalidDataException>(() => ModManifest.FromJson("null"));
+    }
+
+    [Fact]
+    public void FromJson_ParsesScenesWithDefaultBehavior()
+    {
+        var json = """
+        {
+            "id": "com.example.scene-mod",
+            "name": "Scene Mod",
+            "version": "1.0.0",
+            "apiVersion": "1.0",
+            "scenes": [
+                { "path": "assets/Level1" },
+                { "path": "assets/Level2", "name": "Level Two" },
+                { "path": "assets/Level3", "behavior": "menu" },
+                { "path": "assets/Level4", "behavior": "unknown" }
+            ]
+        }
+        """;
+
+        var manifest = ModManifest.FromJson(json);
+        Assert.Equal(4, manifest.Scenes.Count);
+
+        // No behavior set = MenuSelect
+        Assert.Null(manifest.Scenes[0].Behavior);
+        Assert.Equal(ModSceneLoadBehavior.MenuSelect, manifest.Scenes[0].ParsedBehavior);
+
+        // Explicit name
+        Assert.Equal("Level Two", manifest.Scenes[1].Name);
+
+        // "menu" string = MenuSelect
+        Assert.Equal(ModSceneLoadBehavior.MenuSelect, manifest.Scenes[2].ParsedBehavior);
+
+        // Unrecognized string = MenuSelect (safe default)
+        Assert.Equal(ModSceneLoadBehavior.MenuSelect, manifest.Scenes[3].ParsedBehavior);
+    }
+
+    [Fact]
+    public void FromJson_ScenesDefaultToEmpty()
+    {
+        var json = """
+        {
+            "id": "com.example.no-scenes",
+            "name": "No Scenes",
+            "version": "1.0.0",
+            "apiVersion": "1.0"
+        }
+        """;
+
+        var manifest = ModManifest.FromJson(json);
+        Assert.NotNull(manifest.Scenes);
+        Assert.Empty(manifest.Scenes);
     }
 }

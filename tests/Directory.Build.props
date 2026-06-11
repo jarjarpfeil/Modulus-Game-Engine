@@ -6,4 +6,7 @@
   <PropertyGroup>
     <StrideRoot>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../'))</StrideRoot>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(DesignTimeBuild)' == 'true'">
+    <UseAppHost>false</UseAppHost>
+  </PropertyGroup>
 </Project>

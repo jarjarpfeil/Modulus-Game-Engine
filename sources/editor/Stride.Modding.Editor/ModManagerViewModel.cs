@@ -6,6 +6,7 @@ using System.IO;
 using System.Text.Json;
 using System.Windows.Input;
 using Microsoft.Win32;
+using Modulus.ModCompiler;
 using Stride.Core.Assets.Editor.ViewModel;
 using Stride.Core.Presentation.Commands;
 using Stride.Core.Presentation.ViewModels;
@@ -41,6 +42,7 @@ public sealed class ModManagerViewModel : ViewModelBase
         EnableModCommand = new AnonymousCommand(ServiceProvider, () => SetModEnabled(true), () => SelectedMod is { IsEnabled: false });
         DisableModCommand = new AnonymousCommand(ServiceProvider, () => SetModEnabled(false), () => SelectedMod is { IsEnabled: true });
         ReloadModCommand = new AnonymousCommand(ServiceProvider, ReloadMod, () => SelectedMod != null);
+        CompileModAssetsCommand = new AnonymousCommand(ServiceProvider, CompileModAssets, () => SelectedMod != null);
         RefreshCommand = new AnonymousCommand(ServiceProvider, RefreshModList);
 
         RefreshModList();
@@ -81,6 +83,7 @@ public sealed class ModManagerViewModel : ViewModelBase
     public ICommandBase EnableModCommand { get; }
     public ICommandBase DisableModCommand { get; }
     public ICommandBase ReloadModCommand { get; }
+    public ICommandBase CompileModAssetsCommand { get; }
     public ICommandBase RefreshCommand { get; }
 
     /// <summary>Scans the project's mods/ directory and reloads the list.</summary>
@@ -265,6 +268,51 @@ public sealed class ModManagerViewModel : ViewModelBase
 
         StatusMessage = $"Reloaded mod: {SelectedMod.Name} (changes apply on next game start)";
         LogToConsole($"[Editor] Mod '{SelectedMod.Name}' marked for reload — changes will apply when the game starts");
+    }
+
+    /// <summary>
+    /// Compiles the selected mod's assets into ObjectDatabase format using ModCompiler.
+    /// Produces real Stride-serialized assets with ChunkHeader + MurmurHash3 ObjectIds.
+    /// </summary>
+    private void CompileModAssets()
+    {
+        if (SelectedMod == null) return;
+
+        var modsDirectory = GetModsDirectory();
+        var modDir = Path.Combine(modsDirectory, SelectedMod.Id);
+
+        if (!Directory.Exists(modDir))
+        {
+            StatusMessage = $"Mod directory not found: {modDir}";
+            LogToConsole($"[Error] {StatusMessage}");
+            return;
+        }
+
+        StatusMessage = $"Compiling assets for '{SelectedMod.Name}'...";
+        LogToConsole($"[Editor] Compiling mod assets for '{SelectedMod.Name}' ({SelectedMod.Id})...");
+
+        try
+        {
+            var compiler = new ModCompilerService();
+            var result = compiler.CompileMod(modDir);
+
+            if (result.Success)
+            {
+                StatusMessage = $"Compiled {result.EntryCount} assets for '{SelectedMod.Name}'";
+                LogToConsole($"[Editor] Compilation successful: {result.EntryCount} assets, {result.IndexEntries} index entries, {result.DataFileCount} data files");
+            }
+            else
+            {
+                StatusMessage = $"Compilation failed: {result.Errors[0]}";
+                foreach (var error in result.Errors)
+                    LogToConsole($"[Error] {error}");
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Compilation error: {ex.Message}";
+            LogToConsole($"[Error] Compilation failed: {ex.Message}");
+        }
     }
 
     private string GetModsDirectory()

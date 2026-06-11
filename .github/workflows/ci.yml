@@ -1,0 +1,48 @@
+name: CI Build & Test
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        configuration: [Debug, Release]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.x
+
+      - name: Build
+        run: dotnet build build/Stride.sln -c ${{ matrix.configuration }} -p:StrideNativeWindowsArm64Enabled=false
+
+      - name: Test
+        run: dotnet test build/Stride.Tests.Simple.slnf -c ${{ matrix.configuration }} -p:StrideNativeWindowsArm64Enabled=false --no-build --verbosity normal
+
+      - name: Test Modding
+        run: dotnet test sources/engine/Stride.Engine.Modding.Tests/ -c ${{ matrix.configuration }} -p:StrideNativeWindowsArm64Enabled=false --no-build --verbosity normal
+
+  build-editor:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.x
+
+      - name: Build Game Studio
+        run: dotnet build sources/editor/Stride.GameStudio/ -c Release -p:StrideNativeWindowsArm64Enabled=false
+
+      - name: Build Modding Editor
+        run: dotnet build sources/editor/Stride.Modding.Editor/ -c Release -p:StrideNativeWindowsArm64Enabled=false

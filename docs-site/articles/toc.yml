@@ -1,0 +1,6 @@
+- name: Modding
+  href: modding/
+- name: MCP Server
+  href: mcp-server/
+- name: Development
+  href: development/

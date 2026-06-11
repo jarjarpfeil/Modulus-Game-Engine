@@ -42,6 +42,13 @@ public sealed partial class ContentManager : IContentManager
         Serializer = new ContentSerializer();
     }
 
+    /// <summary>
+    /// Optional composite file provider service for cross-mod asset resolution.
+    /// When set, ContentManager falls back to this service when the primary provider
+    /// doesn't have an asset. This enables mods to load assets from other mods.
+    /// </summary>
+    public IDatabaseFileProviderService? CompositeProvider { get; set; }
+
     public ContentManager(IServiceRegistry services) : this(services.GetSafeServiceAs<IDatabaseFileProviderService>())
     {
         if (services != null)
@@ -415,6 +422,10 @@ public sealed partial class ContentManager : IContentManager
 
         if (!FileProvider.FileExists(url))
         {
+            // Try composite provider for cross-mod asset resolution
+            if (TryLoadFromComposite(serializeOperations, parentReference, url, objType, obj, settings, reference, out var compositeResult))
+                return compositeResult;
+
             HandleAssetNotFound(url);
             return null;
         }
@@ -426,10 +437,13 @@ public sealed partial class ContentManager : IContentManager
         try
         {
             using var stream = FileProvider.OpenStream(url, VirtualFileMode.Open, VirtualFileAccess.Read);
-            // File does not exist
-            // TODO/Benlitz: Add a log entry for that, it's not expected to happen
+            // File does not exist in primary provider — try composite
             if (stream == null)
+            {
+                if (TryLoadFromComposite(serializeOperations, parentReference, url, objType, obj, settings, reference, out var compositeResult2))
+                    return compositeResult2;
                 return null;
+            }
 
             Type? headerObjType = null;
 
@@ -506,6 +520,89 @@ public sealed partial class ContentManager : IContentManager
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Attempts to load an asset from the composite provider chain.
+    /// Used as a fallback when the primary provider doesn't have the data.
+    /// </summary>
+    private bool TryLoadFromComposite(Queue<DeserializeOperation> serializeOperations, Reference? parentReference,
+        string url, Type objType, object? obj, ContentManagerLoaderSettings settings, Reference? reference,
+        out object? result)
+    {
+        result = null;
+        if (CompositeProvider is not CompositeFileProviderService composite)
+            return false;
+
+        foreach (var compositeProvider in composite.GetProviders())
+        {
+            if (!compositeProvider.FileExists(url))
+                continue;
+
+            try
+            {
+                using var compositeStream = compositeProvider.OpenStream(url, VirtualFileMode.Open, VirtualFileAccess.Read);
+                if (compositeStream == null)
+                    continue;
+
+                Type? compositeHeaderObjType = null;
+                var compositeStreamReader = new BinarySerializationReader(compositeStream);
+                var compositeChunkHeader = ChunkHeader.Read(compositeStreamReader);
+                if (compositeChunkHeader != null)
+                    compositeHeaderObjType = AssemblyRegistry.GetType(compositeChunkHeader.Type);
+
+                var compositeSerializer = Serializer.GetSerializer(compositeHeaderObjType, objType);
+                if (compositeSerializer == null)
+                    continue;
+
+                var compositeContext = new ContentSerializerContext(url, ArchiveMode.Deserialize, this)
+                {
+                    LoadContentReferences = settings.LoadContentReferences,
+                    AllowContentStreaming = settings.AllowContentStreaming,
+                };
+
+                if (compositeChunkHeader != null && compositeChunkHeader.OffsetToReferences != -1)
+                {
+                    compositeStreamReader.UnderlyingStream.Seek(compositeChunkHeader.OffsetToReferences, SeekOrigin.Begin);
+                    compositeContext.SerializeReferences(compositeStreamReader);
+                    compositeStreamReader.UnderlyingStream.Seek(compositeChunkHeader.OffsetToObject, SeekOrigin.Begin);
+                }
+
+                if (reference == null)
+                {
+                    reference = new Reference(url, parentReference == null);
+                    var compositeResult = obj ?? compositeSerializer.Construct(compositeContext);
+                    SetAssetObject(reference, compositeResult);
+                }
+
+                reference.Deserialized = true;
+                PrepareSerializerContext(compositeContext, compositeStreamReader.Context);
+                compositeContext.SerializeContent(compositeStreamReader, compositeSerializer, reference.Object);
+
+                parentReference?.References.Add(reference);
+
+                if (settings.LoadContentReferences)
+                {
+                    foreach (var contentRef in compositeContext.ContentReferences)
+                    {
+                        bool shouldBeLoaded = true;
+                        settings.ContentFilter?.Invoke(contentRef, ref shouldBeLoaded);
+                        if (shouldBeLoaded)
+                            serializeOperations.Enqueue(new DeserializeOperation(reference, contentRef.Location, contentRef.Type, contentRef.ObjectValue));
+                    }
+                }
+
+                result = reference.Object;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"[ContentManager] Composite load failed for '{url}': {ex.Message}");
+                return false;
+            }
+        }
+
+        return false;
     }
 
     private readonly struct SerializeOperation

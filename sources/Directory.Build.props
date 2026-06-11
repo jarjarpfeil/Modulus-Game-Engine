@@ -9,4 +9,12 @@
          without any pre-set property). See docs/build/SDK-GUIDE.md for details. -->
     <StrideRoot>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../'))</StrideRoot>
   </PropertyGroup>
+  <!-- Workaround: Roslyn language server (v2.140.x) ships a BuildHost with a version of
+       Microsoft.NET.HostModel that is incompatible with .NET 10 SDK's System.Reflection.PortableExecutable.
+       This causes CreateAppHost to throw MissingMethodException on PEHeaders.get_SectionHeaders()
+       during design-time builds. Disabling UseAppHost for design-time builds fixes the LS errors
+       without affecting actual builds (dotnet run/test still work fine). -->
+  <PropertyGroup Condition="'$(DesignTimeBuild)' == 'true'">
+    <UseAppHost>false</UseAppHost>
+  </PropertyGroup>
 </Project>

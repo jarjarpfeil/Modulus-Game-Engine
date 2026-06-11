@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using Stride.Core;
 using Stride.Core.Diagnostics;
@@ -44,10 +45,20 @@ public class ModContentManager
     /// <summary>
     /// Registers the game's built-in file provider as the base layer.
     /// Must be called before adding mod providers.
+    /// Also wires up the composite provider on ContentManager for cross-mod asset resolution.
     /// </summary>
     public void RegisterGameProvider(DatabaseFileProvider gameProvider)
     {
         _compositeService.AddProvider(gameProvider);
+
+        // Wire up composite provider on ContentManager for cross-mod fallback
+        var contentManager = _services.GetService<ContentManager>();
+        if (contentManager != null)
+        {
+            contentManager.CompositeProvider = _compositeService;
+            Log.Info("[ModContentManager] Wired composite provider on ContentManager");
+        }
+
         Log.Info("[ModContentManager] Registered game content provider");
     }
 
@@ -74,20 +85,76 @@ public class ModContentManager
             var provider = new DatabaseFileProvider(objectDatabase);
             _compositeService.AddProvider(provider);
             _modProviders[package.Manifest.Id] = provider;
-            Log.Info($"[ModContentManager] Registered mod content: {package.Manifest.Id} (database mode)");
+
+            // Merge mod's ContentIndexMap entries into the game's primary index
+            // This enables ContentManager.Exists(url) to find mod assets
+            MergeIntoGameIndex(objectDatabase.ContentIndexMap, package.Manifest.Id);
+
+            Log.Info($"[ModContentManager] Registered mod content: {package.Manifest.Id} (database mode, {objectDatabase.ContentIndexMap.GetMergedIdMap().Count()} index entries)");
         }
-        else if (Directory.Exists(modAssetPath))
+        else if (Directory.Exists(modAssetPath) && File.Exists(Path.Combine(modAssetPath, "index")))
         {
-            // Fallback: create a local object database for loose mod assets
-            var objectDatabase = new ObjectDatabase(modAssetPath, "index", loadDefaultBundle: false);
+            // Only use directory mode if there's an actual compiled index file
+            // Mount a VFS provider for this mod's assets directory
+            var vfsUrl = $"/mod-assets-{package.Manifest.Id}";
+            try
+            {
+                VirtualFileSystem.RemountFileSystem(vfsUrl, modAssetPath);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"[ModContentManager] Failed to mount VFS for mod '{package.Manifest.Id}': {ex.Message}");
+            }
+
+            var objectDatabase = new ObjectDatabase(vfsUrl, "index", loadDefaultBundle: false);
             var provider = new DatabaseFileProvider(objectDatabase);
             _compositeService.AddProvider(provider);
             _modProviders[package.Manifest.Id] = provider;
-            Log.Info($"[ModContentManager] Registered mod content: {package.Manifest.Id} (loose assets mode)");
+
+            // Merge mod's ContentIndexMap entries into the game's primary index
+            MergeIntoGameIndex(objectDatabase.ContentIndexMap, package.Manifest.Id);
+
+            Log.Info($"[ModContentManager] Registered mod content: {package.Manifest.Id} (loose assets mode, {objectDatabase.ContentIndexMap.GetMergedIdMap().Count()} index entries)");
+        }
+        else if (Directory.Exists(modAssetPath))
+        {
+            // Assets directory exists but has no compiled index — raw source files only
+            Log.Info($"[ModContentManager] Mod '{package.Manifest.Id}' has raw assets in {modAssetPath} (no compiled index — requires asset pipeline)");
         }
         else
         {
             Log.Info($"[ModContentManager] Mod '{package.Manifest.Id}' has no assets — skipping content registration");
+        }
+    }
+
+    /// <summary>
+    /// Merges a mod's ContentIndexMap entries into the game's primary ContentIndexMap.
+    /// This enables ContentManager.Exists(url) to find URLs from any mod.
+    /// </summary>
+    private void MergeIntoGameIndex(IContentIndexMap modIndex, string modId)
+    {
+        try
+        {
+            var contentManager = _services.GetService<ContentManager>();
+            if (contentManager == null) return;
+
+            var gameProvider = contentManager.FileProvider;
+            if (gameProvider?.ContentIndexMap == null) return;
+
+            var gameIndex = gameProvider.ContentIndexMap;
+            int merged = 0;
+            foreach (var entry in modIndex.GetMergedIdMap())
+            {
+                gameIndex[entry.Key] = entry.Value;
+                merged++;
+            }
+
+            if (merged > 0)
+                Log.Info($"[ModContentManager] Merged {merged} index entries from mod '{modId}' into game index");
+        }
+        catch (Exception ex)
+        {
+            Log.Warning($"[ModContentManager] Failed to merge index for mod '{modId}': {ex.Message}");
         }
     }
 
@@ -221,7 +288,7 @@ public class ModContentManager
 
     /// <summary>
     /// Injects GUID mappings into the runtime asset database so scene references to mod assets resolve correctly.
-    /// This patches the ContentManager's object database with the mod's virtual-path-to-GUID mappings.
+    /// This patches the ContentManager's ContentIndexMap with the mod's virtual-path-to-ObjectId mappings.
     /// </summary>
     private void InjectGuidMappingsIntoRuntime(List<GuidMapping> mappings, string modId)
     {
@@ -234,14 +301,26 @@ public class ModContentManager
                 return;
             }
 
-            // Store mappings for runtime resolution — the composite file provider will use these
-            // to resolve virtual paths to the correct GUIDs when assets are loaded
+            // Inject each mod asset URL into the game's ContentIndexMap
+            // This enables ContentManager.Load<Scene>("assets/MyScene") to resolve mod assets
+            var indexMap = contentManager.FileProvider.ContentIndexMap;
+            int injected = 0;
             foreach (var mapping in mappings)
             {
-                Log.Debug($"[ModContentManager] Registered GUID mapping: {mapping.VirtualPath} -> {mapping.Guid} (mod: {modId})");
+                try
+                {
+                    indexMap[mapping.VirtualPath] = (ObjectId)mapping.Guid;
+                    injected++;
+                    Log.Debug($"[ModContentManager] Injected GUID mapping: {mapping.VirtualPath} -> {mapping.Guid} (mod: {modId})");
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning($"[ModContentManager] Failed to inject GUID mapping '{mapping.VirtualPath}': {ex.Message}");
+                }
             }
-            
-            Log.Info($"[ModContentManager] Injected {mappings.Count} GUID mappings for mod '{modId}'");
+
+            if (injected > 0)
+                Log.Info($"[ModContentManager] Injected {injected}/{mappings.Count} GUID mappings for mod '{modId}'");
         }
         catch (Exception ex)
         {

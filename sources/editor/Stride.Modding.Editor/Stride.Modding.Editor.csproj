@@ -23,6 +23,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\engine\Stride.Engine\Stride.Engine.csproj" />
     <ProjectReference Include="..\..\engine\Modulus.Modding.Api\Modulus.Modding.Api.csproj" />
+    <ProjectReference Include="..\..\tools\Modulus.ModCompiler\Modulus.ModCompiler.csproj" />
     <ProjectReference Include="..\Stride.Core.Assets.Editor\Stride.Core.Assets.Editor.csproj" />
     <ProjectReference Include="..\Stride.Editor\Stride.Editor.csproj" />
     <ProjectReference Include="..\..\core\Stride.Core\Stride.Core.csproj" />

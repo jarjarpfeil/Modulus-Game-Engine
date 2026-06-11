@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Modulus.Modding.Api;
 
 namespace Stride.Engine.Modding;
 
@@ -65,6 +66,10 @@ public sealed class ModManifest
     /// <summary>Custom shaders included in the mod.</summary>
     [JsonPropertyName("shaders")]
     public List<ModShaderDeclaration>? Shaders { get; set; }
+
+    /// <summary>Scene assets shipped by this mod, with optional load behavior.</summary>
+    [JsonPropertyName("scenes")]
+    public List<ModSceneDeclaration> Scenes { get; set; } = [];
 
     /// <summary>Load order priority (lower = loads first, default 100).</summary>
     [JsonPropertyName("loadOrder")]
@@ -154,4 +159,40 @@ public sealed class ModShaderDeclaration
 
     [JsonPropertyName("path")]
     public string Path { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// A scene asset declared in mod.json, with optional load behavior.
+/// If <see cref="Behavior"/> is omitted or set to <c>"menu"</c>,
+/// the engine presents the scene to the player for selection.
+/// </summary>
+public sealed class ModSceneDeclaration
+{
+    /// <summary>The URL/path to the scene asset within the mod (e.g. "assets/MainMenu").</summary>
+    [JsonPropertyName("path")]
+    public string Path { get; set; } = string.Empty;
+
+    /// <summary>Human-readable scene name for UI menus.</summary>
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
+
+    /// <summary>
+    /// Optional load behavior string: "menu", "replace", "additive", or "background".
+    /// Omitted or "menu" = player-selectable. Parsed to <see cref="ModSceneLoadBehavior"/>.
+    /// </summary>
+    [JsonPropertyName("behavior")]
+    public string? Behavior { get; set; }
+
+    /// <summary>
+    /// Parses the behavior string into a <see cref="ModSceneLoadBehavior"/>.
+    /// Returns <see cref="ModSceneLoadBehavior.MenuSelect"/> for null/unrecognised strings.
+    /// </summary>
+    public ModSceneLoadBehavior ParsedBehavior => Behavior?.ToLowerInvariant() switch
+    {
+        "replace" => ModSceneLoadBehavior.Replace,
+        "additive" => ModSceneLoadBehavior.Additive,
+        "background" => ModSceneLoadBehavior.Background,
+        "menu" => ModSceneLoadBehavior.MenuSelect,
+        _ => ModSceneLoadBehavior.MenuSelect,
+    };
 }

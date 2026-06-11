@@ -4,10 +4,17 @@
   "version": "1.0.0",
   "apiVersion": "1.0",
   "author": "Modulus Integration Test",
-  "description": "All SpaceEscape binary assets: models, textures, materials, scenes, animations, shaders.",
+  "description": "All SpaceEscape binary assets: models, textures, materials, scene, animations.",
   "entryPoint": null,
   "components": [],
   "systems": [],
+  "scenes": [
+    {
+      "path": "assets/Scene.sdscene",
+      "name": "SpaceEscape Main Scene",
+      "behavior": "replace"
+    }
+  ],
   "assets": [
     "assets/Scene.sdscene",
     "assets/LevelBlocks.sdscene",

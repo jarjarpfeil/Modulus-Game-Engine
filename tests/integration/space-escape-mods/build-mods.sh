@@ -28,8 +28,11 @@ for mod in mod-character mod-background mod-ui mod-rendering mod-chaos; do
         -c Debug
 done
 
-# mod-assets is data-only, no code to build
-echo "--- Setting up mod-assets (data-only) ---"
+# mod-assets is data-only, compile its assets using ModCompiler
+echo "--- Compiling mod-assets (data-only) ---"
+dotnet run --project "$ROOT/ModAssetBuilder/ModAssetBuilder.csproj" \
+    -p:StrideNativeWindowsArm64Enabled=false \
+    -- "$ROOT/mod-assets"
 
 # Create mods directory
 mkdir -p "$MODS_DIR"

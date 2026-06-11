@@ -1,0 +1,17 @@
+{
+  "$schema": "https://app.kilo.ai/config.json",
+  "mcp": {
+    "modulus": {
+      "type": "local",
+      "command": ["dotnet", "run", "--project", "D:/Modulus-Game-Engine/tools/ModulusEngine.MCPServer/ModulusEngine.MCPServer.csproj", "--no-build"],
+      "enabled": true,
+      "timeout": 30000
+    }
+  },
+  "permission": {
+    "mcp_modulus_*": "allow"
+  },
+  "indexing": {
+    "enabled": false
+  }
+}

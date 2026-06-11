@@ -27,7 +27,11 @@
         </Button>
         <Separator/>
         <Button Command="{Binding ReloadModCommand}" ToolTip="Reload selected mod (applies on next game start)">
-          <TextBlock Text="↻" FontSize="14" Foreground="Blue"/>
+          <TextBlock Text="&#x21BB;" FontSize="14" Foreground="Blue"/>
+        </Button>
+        <Separator/>
+        <Button Command="{Binding CompileModAssetsCommand}" ToolTip="Compile selected mod's assets into ObjectDatabase format">
+          <TextBlock Text="&#x2692;" FontSize="14" Foreground="DarkGoldenrod"/>
         </Button>
         <Separator/>
         <Button Command="{Binding RefreshCommand}" ToolTip="Refresh mod list">

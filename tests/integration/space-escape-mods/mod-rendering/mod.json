@@ -6,6 +6,9 @@
   "author": "Modulus Integration Test",
   "description": "Custom render feature: fog, world bending, UV scrolling.",
   "entryPoint": "ModRendering.ModEntry, ModRendering",
+  "dependencies": [
+    { "id": "com.spaceescape.assets", "minVersion": "1.0.0", "optional": false }
+  ],
   "shaders": [
     { "name": "CustomFogEffect", "path": "shaders/CustomFogEffect.sdsl" },
     { "name": "TransformationBendWorld", "path": "shaders/TransformationBendWorld.sdsl" },

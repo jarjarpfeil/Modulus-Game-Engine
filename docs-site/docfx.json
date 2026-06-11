@@ -1,0 +1,19 @@
+{
+  "build": {
+    "content": [
+      { "files": ["toc.yml", "index.md"] },
+      { "files": ["articles/**.md", "articles/**/toc.yml"], "dest": "docs" }
+    ],
+    "resource": [
+      { "files": ["articles/images/**"] }
+    ],
+    "globalMetadata": {
+      "_appTitle": "Modulus Engine",
+      "_appFooter": "Copyright (c) 2026 Modulus Engine Contributors",
+      "_enableSearch": true,
+      "_enableNewTab": true
+    },
+    "template": ["default", "modern"],
+    "dest": "docs-site-out"
+  }
+}
