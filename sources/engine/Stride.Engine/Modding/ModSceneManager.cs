@@ -7,7 +7,12 @@ using System.IO;
 using Modulus.Modding.Api;
 using Stride.Core;
 using Stride.Core.Diagnostics;
+using Stride.Core.Mathematics;
 using Stride.Core.Serialization.Contents;
+using Stride.Graphics;
+using Stride.Rendering;
+using Stride.Rendering.Materials;
+using Stride.Rendering.Materials.ComputeColors;
 
 namespace Stride.Engine.Modding;
 
@@ -254,13 +259,26 @@ public class ModSceneManager
 
         // Apply behavior
         var sceneSystem = _services.GetService<SceneSystem>();
+        Scene sceneToActivate = scene;
         switch (behavior)
         {
             case ModSceneLoadBehavior.Replace:
                 if (sceneSystem != null)
                 {
-                    sceneSystem.SceneInstance = new SceneInstance(_services, scene);
-                    WireCameraSlots(scene, sceneSystem);
+                    // Create a fresh scene and move entities from the deserialized scene.
+                    // Entities can't be in two scenes simultaneously, so we remove from
+                    // the old scene first, then add to the fresh one.
+                    var freshScene = new Scene();
+                    var entitiesToMove = new List<Entity>(scene.Entities);
+                    foreach (var entity in entitiesToMove)
+                    {
+                        scene.Entities.Remove(entity);
+                        freshScene.Entities.Add(entity);
+                    }
+                    EnsureSceneHasRenderables(freshScene);
+                    sceneToActivate = freshScene;
+                    sceneSystem.SceneInstance = new SceneInstance(_services, freshScene);
+                    WireCameraSlots(freshScene, sceneSystem);
                     Log.Info($"[ModSceneManager] Replaced active scene with '{key}'");
                 }
                 else
@@ -284,7 +302,7 @@ public class ModSceneManager
                 break;
         }
 
-        _loadedScenes[key] = scene;
+        _loadedScenes[key] = sceneToActivate;
         return scene;
     }
 
@@ -386,6 +404,122 @@ public class ModSceneManager
                 Log.Info($"[ModSceneManager] Assigned camera '{entity.Name}' to compositor slot '{firstSlot.Name ?? "Main"}'");
             }
         }
+    }
+
+    /// <summary>
+    /// Ensures a scene has renderable geometry. Compiled mod scenes contain only data-only
+    /// components (camera, light, transforms) because GPU buffers can't be created without
+    /// a GraphicsDevice at compile time. This adds a ground plane and marker cube so the
+    /// scene is visually non-empty. Must be called BEFORE setting the SceneInstance.
+    /// </summary>
+    private void EnsureSceneHasRenderables(Scene scene)
+    {
+        bool hasRenderable = false;
+        foreach (var entity in scene.Entities)
+        {
+            if (entity.Get<ModelComponent>() != null)
+            {
+                hasRenderable = true;
+                break;
+            }
+        }
+
+        if (hasRenderable)
+            return;
+
+        var graphicsDevice = (_services.GetService<IGraphicsDeviceService>())?.GraphicsDevice;
+        if (graphicsDevice == null)
+        {
+            Log.Warning("[ModSceneManager] Cannot add renderables — GraphicsDevice not available");
+            return;
+        }
+
+        var ground = CreateColoredCube(graphicsDevice,
+            "Ground",
+            new Stride.Core.Mathematics.Vector3(0, -0.5f, 0),
+            new Stride.Core.Mathematics.Vector3(50, 1, 50),
+            new Stride.Core.Mathematics.Color4(0.25f, 0.6f, 0.3f, 1f));
+        scene.Entities.Add(ground);
+
+        var marker = CreateColoredCube(graphicsDevice,
+            "Marker",
+            new Stride.Core.Mathematics.Vector3(0, 1.5f, 0),
+            new Stride.Core.Mathematics.Vector3(2, 3, 2),
+            new Stride.Core.Mathematics.Color4(0.9f, 0.2f, 0.2f, 1f));
+        scene.Entities.Add(marker);
+
+        Log.Info("[ModSceneManager] Added ground plane + marker cube to mod scene");
+    }
+
+    private static Entity CreateColoredCube(GraphicsDevice graphicsDevice, string name,
+        Stride.Core.Mathematics.Vector3 position, Stride.Core.Mathematics.Vector3 scale,
+        Stride.Core.Mathematics.Color4 color)
+    {
+        var material = Material.New(graphicsDevice, new MaterialDescriptor
+        {
+            Attributes = new MaterialAttributes
+            {
+                Diffuse = new MaterialDiffuseMapFeature(new ComputeColor { Value = color }),
+                DiffuseModel = new MaterialDiffuseLambertModelFeature(),
+            }
+        });
+
+        var vertices = new Stride.Graphics.VertexPositionNormalTexture[]
+        {
+            new(new Stride.Core.Mathematics.Vector3(-0.5f, -0.5f,  0.5f), Stride.Core.Mathematics.Vector3.UnitZ, Stride.Core.Mathematics.Vector2.Zero),
+            new(new Stride.Core.Mathematics.Vector3( 0.5f, -0.5f,  0.5f), Stride.Core.Mathematics.Vector3.UnitZ, Stride.Core.Mathematics.Vector2.UnitX),
+            new(new Stride.Core.Mathematics.Vector3( 0.5f,  0.5f,  0.5f), Stride.Core.Mathematics.Vector3.UnitZ, Stride.Core.Mathematics.Vector2.One),
+            new(new Stride.Core.Mathematics.Vector3(-0.5f,  0.5f,  0.5f), Stride.Core.Mathematics.Vector3.UnitZ, Stride.Core.Mathematics.Vector2.UnitY),
+            new(new Stride.Core.Mathematics.Vector3( 0.5f, -0.5f, -0.5f), -Stride.Core.Mathematics.Vector3.UnitZ, Stride.Core.Mathematics.Vector2.Zero),
+            new(new Stride.Core.Mathematics.Vector3(-0.5f, -0.5f, -0.5f), -Stride.Core.Mathematics.Vector3.UnitZ, Stride.Core.Mathematics.Vector2.UnitX),
+            new(new Stride.Core.Mathematics.Vector3(-0.5f,  0.5f, -0.5f), -Stride.Core.Mathematics.Vector3.UnitZ, Stride.Core.Mathematics.Vector2.One),
+            new(new Stride.Core.Mathematics.Vector3( 0.5f,  0.5f, -0.5f), -Stride.Core.Mathematics.Vector3.UnitZ, Stride.Core.Mathematics.Vector2.UnitY),
+            new(new Stride.Core.Mathematics.Vector3(-0.5f,  0.5f,  0.5f), Stride.Core.Mathematics.Vector3.UnitY, Stride.Core.Mathematics.Vector2.Zero),
+            new(new Stride.Core.Mathematics.Vector3( 0.5f,  0.5f,  0.5f), Stride.Core.Mathematics.Vector3.UnitY, Stride.Core.Mathematics.Vector2.UnitX),
+            new(new Stride.Core.Mathematics.Vector3( 0.5f,  0.5f, -0.5f), Stride.Core.Mathematics.Vector3.UnitY, Stride.Core.Mathematics.Vector2.One),
+            new(new Stride.Core.Mathematics.Vector3(-0.5f,  0.5f, -0.5f), Stride.Core.Mathematics.Vector3.UnitY, Stride.Core.Mathematics.Vector2.UnitY),
+            new(new Stride.Core.Mathematics.Vector3(-0.5f, -0.5f, -0.5f), -Stride.Core.Mathematics.Vector3.UnitY, Stride.Core.Mathematics.Vector2.Zero),
+            new(new Stride.Core.Mathematics.Vector3( 0.5f, -0.5f, -0.5f), -Stride.Core.Mathematics.Vector3.UnitY, Stride.Core.Mathematics.Vector2.UnitX),
+            new(new Stride.Core.Mathematics.Vector3( 0.5f, -0.5f,  0.5f), -Stride.Core.Mathematics.Vector3.UnitY, Stride.Core.Mathematics.Vector2.One),
+            new(new Stride.Core.Mathematics.Vector3(-0.5f, -0.5f,  0.5f), -Stride.Core.Mathematics.Vector3.UnitY, Stride.Core.Mathematics.Vector2.UnitY),
+            new(new Stride.Core.Mathematics.Vector3( 0.5f, -0.5f,  0.5f), Stride.Core.Mathematics.Vector3.UnitX, Stride.Core.Mathematics.Vector2.Zero),
+            new(new Stride.Core.Mathematics.Vector3( 0.5f, -0.5f, -0.5f), Stride.Core.Mathematics.Vector3.UnitX, Stride.Core.Mathematics.Vector2.UnitX),
+            new(new Stride.Core.Mathematics.Vector3( 0.5f,  0.5f, -0.5f), Stride.Core.Mathematics.Vector3.UnitX, Stride.Core.Mathematics.Vector2.One),
+            new(new Stride.Core.Mathematics.Vector3( 0.5f,  0.5f,  0.5f), Stride.Core.Mathematics.Vector3.UnitX, Stride.Core.Mathematics.Vector2.UnitY),
+            new(new Stride.Core.Mathematics.Vector3(-0.5f, -0.5f, -0.5f), -Stride.Core.Mathematics.Vector3.UnitX, Stride.Core.Mathematics.Vector2.Zero),
+            new(new Stride.Core.Mathematics.Vector3(-0.5f, -0.5f,  0.5f), -Stride.Core.Mathematics.Vector3.UnitX, Stride.Core.Mathematics.Vector2.UnitX),
+            new(new Stride.Core.Mathematics.Vector3(-0.5f,  0.5f,  0.5f), -Stride.Core.Mathematics.Vector3.UnitX, Stride.Core.Mathematics.Vector2.One),
+            new(new Stride.Core.Mathematics.Vector3(-0.5f,  0.5f, -0.5f), -Stride.Core.Mathematics.Vector3.UnitX, Stride.Core.Mathematics.Vector2.UnitY),
+        };
+
+        var indices = new ushort[]
+        {
+            0,1,2, 0,2,3, 4,5,6, 4,6,7, 8,9,10, 8,10,11,
+            12,13,14, 12,14,15, 16,17,18, 16,18,19, 20,21,22, 20,22,23,
+        };
+
+        var vbo = Stride.Graphics.Buffer.Vertex.New(graphicsDevice, vertices);
+        var ibo = Stride.Graphics.Buffer.Index.New(graphicsDevice, indices);
+
+        var mesh = new Mesh
+        {
+            Draw = new MeshDraw
+            {
+                StartLocation = 0,
+                PrimitiveType = Stride.Graphics.PrimitiveType.TriangleList,
+                VertexBuffers = new[] { new VertexBufferBinding(vbo, Stride.Graphics.VertexPositionNormalTexture.Layout, vertices.Length) },
+                IndexBuffer = new IndexBufferBinding(ibo, false, indices.Length),
+            }
+        };
+
+        var model = new Model();
+        model.Meshes.Add(mesh);
+        model.Materials.Add(new MaterialInstance(material));
+
+        var entity = new Entity(name) { new ModelComponent(model) };
+        entity.Transform.Position = position;
+        entity.Transform.Scale = scale;
+        return entity;
     }
 
     /// <summary>
