@@ -188,6 +188,9 @@ POST /api/v1/mod/install       (Phase 6)
 6. **Pragmatic renaming:** "any system that we have actively changed needs to be
    rebranded, if its still the same package we leave it alone."
 
+## Subagents available
+.kilo/agents/ contains 4 custom subagents ready to be employed
+
 ## Where to find more
 
 - **High-level plan:** `MODULUS-ENGINE-PLAN.md` (10 phases, 0–9 done)

@@ -1,7 +1,6 @@
 ---
 description: Build, test, and run the Modulus/Stride engine. Use this agent when you need to verify a change compiles, run the test suite, or package the NuGet. Routes through build scripts with the required ARM64 flag.
 mode: subagent
-model: opencode-go/deepseek-v4-flash
 steps: 30
 permission:
   bash: allow

@@ -1,7 +1,6 @@
 ---
 description: Use MCP tools and HTTP API endpoints to inspect and modify a running engine instance, read editor logs, take screenshots, install/manage mods, query entities. Use this when the user wants to interact with a running Game Studio or game host.
 mode: subagent
-model: opencode-go/deepseek-v4-flash
 steps: 30
 permission:
   bash: allow

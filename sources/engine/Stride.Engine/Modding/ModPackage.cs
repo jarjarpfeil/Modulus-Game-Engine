@@ -6,6 +6,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Reflection;
 using Modulus.Modding.Api;
+using Stride.Core.Diagnostics;
 
 namespace Stride.Engine.Modding;
 
@@ -20,11 +21,22 @@ public sealed class ModPackage
     /// <summary>The AssemblyLoadContext this mod's assemblies live in.</summary>
     public ModLoadContext? LoadContext { get; private set; }
 
+    /// <summary>
+    /// The non-collectible ALC for native mods (when <see cref="IsHotSwappable"/> is false).
+    /// </summary>
+    public NativeModLoadContext? NativeLoadContext { get; private set; }
+
     /// <summary>The mod's root directory (unpacked .modpkg).</summary>
     public string ModDirectory { get; }
 
     /// <summary>Whether the mod is currently enabled and running.</summary>
     public bool IsEnabled { get; set; }
+
+    /// <summary>
+    /// Whether this mod can be hot-swapped (unloaded and reloaded at runtime).
+    /// Native mods are loaded into a non-collectible ALC and cannot be hot-swapped.
+    /// </summary>
+    public bool IsHotSwappable { get; set; } = true;
 
     /// <summary>Error state — non-null if the mod errored out.</summary>
     public string? ErrorReason { get; set; }
@@ -71,9 +83,41 @@ public sealed class ModPackage
     }
 
     /// <summary>
-    /// Unloads the mod's ALC.
+    /// Loads mod assemblies into a non-collectible NativeModLoadContext.
+    /// Used for mods with RequiresNativeCode = true. Native DLLs are allowed
+    /// but the mod cannot be hot-swapped.
     /// </summary>
-    public void UnloadAssemblies()
+    public void LoadNativeAssemblies(ModHost host)
+    {
+        NativeLoadContext = new NativeModLoadContext(host, Manifest.Id, ModDirectory);
+
+        var assembliesDir = Path.Combine(ModDirectory, "assemblies");
+        if (Directory.Exists(assembliesDir))
+        {
+            foreach (var dll in Directory.GetFiles(assembliesDir, "*.dll"))
+            {
+                NativeLoadContext.LoadFromModPath(dll);
+            }
+        }
+
+        foreach (var dll in Directory.GetFiles(ModDirectory, "*.dll"))
+        {
+            NativeLoadContext.LoadFromModPath(dll);
+        }
+
+        IsHotSwappable = false;
+    }
+
+    /// <summary>
+    /// Unloads the mod's ALC and nullifies all strong references to it.
+    /// This is the single critical step for ALC garbage collection — any
+    /// remaining strong reference (even this property) will permanently root
+    /// the ALC and leak the mod's entire DLL memory.
+    ///
+    /// For native mods, the ALC is non-collectible, so this only nulls
+    /// the reference (the native DLLs remain loaded in the process).
+    /// </summary>
+    public void Unload()
     {
         ModAssembly = null;
         if (LoadContext != null)
@@ -81,7 +125,25 @@ public sealed class ModPackage
             LoadContext.Unload();
             LoadContext = null;
         }
+        if (NativeLoadContext != null)
+        {
+            // Native ALC is non-collectible — cannot Unload().
+            // Null the reference, but the native DLL file handles loaded into the
+            // process by this mod (both managed and unmanaged) will remain resident
+            // until a full process restart. There is no workaround for this — it is
+            // a fundamental OS limitation of loadable native module handles.
+            GlobalLogger.GetLogger("ModPackage").Warning(
+                $"[ModPackage] Nulled NativeLoadContext reference for mod '{Manifest.Id}', " +
+                "but native DLL handles will remain loaded until process exit.");
+            NativeLoadContext = null;
+        }
     }
+
+    /// <summary>
+    /// Legacy alias — call <see cref="Unload"/> instead. Kept for backward
+    /// compatibility during transition.
+    /// </summary>
+    public void UnloadAssemblies() => Unload();
 
     /// <summary>
     /// Extracts a .modpkg zip to a temp directory and creates a ModPackage from it.

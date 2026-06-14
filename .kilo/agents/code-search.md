@@ -1,7 +1,6 @@
 ---
 description: Run a quick targeted search across the Stride/Modulus codebase for symbols, types, files, or patterns. Optimized for low token cost — uses fast exploration tools and returns concise answers.
 mode: subagent
-model: opencode-go/deepseek-v4-flash
 steps: 15
 permission:
   bash: allow

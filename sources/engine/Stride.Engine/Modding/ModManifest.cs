@@ -84,6 +84,15 @@ public sealed class ModManifest
     public string Type { get; set; } = "standard";
 
     /// <summary>
+    /// If true, this mod requires native code execution (P/Invoke, native DLLs).
+    /// Native mods lose hot-swapping privileges and require explicit user consent
+    /// via engine security config (<c>EnableNativeModLoading</c>).
+    /// Default: false.
+    /// </summary>
+    [JsonPropertyName("requiresNativeCode")]
+    public bool RequiresNativeCode { get; set; }
+
+    /// <summary>
     /// Parses a mod.json manifest from a stream.
     /// </summary>
     public static ModManifest FromStream(Stream stream)

@@ -9,6 +9,52 @@ using System.Runtime.Loader;
 namespace Stride.Engine.Modding;
 
 /// <summary>
+/// Defines the set of core API assemblies that all ALCs (both collectible
+/// <see cref="ModLoadContext"/> and non-collectible <see cref="NativeModLoadContext"/>)
+/// must route to the default load context. This is the single source of truth that
+/// prevents type-identity mismatches across ALC boundaries.
+///
+/// IMPORTANT: Adding or removing ANY entry here has cross-ALC type-identity
+/// implications. Every ALC uses this exact set. Keep in sync with
+/// <see cref="ModHost.IsCoreApiAssembly"/> (used for shared assembly resolution).
+/// </summary>
+internal static class ModCoreAssemblies
+{
+    private static readonly HashSet<string> Names = new(StringComparer.Ordinal)
+    {
+        "Stride.Core",
+        "Stride.Core.IO",
+        "Stride.Core.MicroThreading",
+        "Stride.Core.Serialization",
+        "Stride.Core.Mathematics",
+        "Stride.Engine",
+        "Stride.Graphics",
+        "Stride.Rendering",
+        "Stride.Audio",
+        "Stride.Shaders",
+        "Stride.Games",
+        "Stride.Physics",
+        "Stride.Navigation",
+        "Stride.VirtualReality",
+        "Stride.Assets",
+        "Stride.UI",
+        "Stride.Particles",
+        "Stride.SpriteStudio",
+        "Stride.Video",
+        "Modulus.Modding.Api",
+    };
+
+    /// <summary>
+    /// Returns true if the given assembly name is a core API assembly that
+    /// must be resolved through the default (engine) ALC.
+    /// </summary>
+    public static bool IsCore(string? name)
+    {
+        return name != null && Names.Contains(name);
+    }
+}
+
+/// <summary>
 /// Collectible AssemblyLoadContext for a single mod. Each mod gets its own ALC so
 /// it can be unloaded independently. Implements cross-ALC type identity rules:
 /// core API assemblies are routed to the default context, shared dependencies
@@ -53,7 +99,7 @@ public class ModLoadContext : AssemblyLoadContext
 
         // Route core API assemblies to the default load context (engine's ALC).
         // This preserves type identity — Mod A and Mod B both see the same Stride.Engine types.
-        if (IsCoreApiAssembly(name))
+        if (ModCoreAssemblies.IsCore(name))
             return null; // Falls back to default load behavior
 
         // Route shared dependencies to the default context to preserve type identity.
@@ -73,34 +119,81 @@ public class ModLoadContext : AssemblyLoadContext
     public IReadOnlyList<string> GetLoadedPaths() => _assemblyPaths;
 
     /// <summary>
-    /// Assemblies that should always resolve to the default (engine) ALC.
-    /// Mods MUST NOT load their own copies of these.
+    /// Mods are managed C# only — no native DLL loading is permitted in the
+    /// default collectible ALC. This override enforces that policy.
     /// </summary>
-    private static bool IsCoreApiAssembly(string name)
+    protected override IntPtr LoadUnmanagedDll(string unmanagedDllName)
     {
-        return name switch
-        {
-            "Stride.Core" => true,
-            "Stride.Core.IO" => true,
-            "Stride.Core.MicroThreading" => true,
-            "Stride.Core.Serialization" => true,
-            "Stride.Core.Mathematics" => true,
-            "Stride.Engine" => true,
-            "Stride.Graphics" => true,
-            "Stride.Rendering" => true,
-            "Stride.Audio" => true,
-            "Stride.Shaders" => true,
-            "Stride.Games" => true,
-            "Stride.Physics" => true,
-            "Stride.Navigation" => true,
-            "Stride.VirtualReality" => true,
-            "Stride.Assets" => true,
-            "Stride.UI" => true,
-            "Stride.Particles" => true,
-            "Stride.SpriteStudio" => true,
-            "Stride.Video" => true,
-            "Modulus.Modding.Api" => true,
-            _ => false
-        };
+        throw new NotSupportedException(
+            $"Mod '{ModId}' attempted to load the native library '{unmanagedDllName}'. " +
+            "Native dependencies are blocked by default. Enable RequiresNativeCode in manifest " +
+            "and EnableNativeModLoading in engine security config.");
     }
+}
+
+/// <summary>
+/// Non-collectible AssemblyLoadContext for mods that require native code.
+/// Unlike <see cref="ModLoadContext"/>, this ALC allows native DLL loading
+/// and is NOT collectible (the mod cannot be hot-swapped).
+///
+/// Use <see cref="ModSecurityConfig.EnableNativeModLoading"/> and
+/// <see cref="ModManifest.RequiresNativeCode"/> to gate access.
+/// </summary>
+public sealed class NativeModLoadContext : AssemblyLoadContext
+{
+    private readonly ModHost _host;
+    private readonly string _modDirectory;
+    private readonly List<string> _assemblyPaths = [];
+
+    public string ModId { get; }
+
+    public NativeModLoadContext(ModHost host, string modId, string modDirectory)
+        : base($"native-mod-{modId}", isCollectible: false)
+    {
+        _host = host;
+        ModId = modId;
+        _modDirectory = modDirectory;
+    }
+
+    /// <summary>
+    /// Loads a native mod assembly from a DLL path.
+    /// </summary>
+    public Assembly LoadFromModPath(string assemblyPath)
+    {
+        _assemblyPaths.Add(assemblyPath);
+        return LoadFromAssemblyPath(assemblyPath);
+    }
+
+    /// <summary>
+    /// Same cross-ALC type resolution as ModLoadContext — core API and shared
+    /// dependencies resolve to the default ALC.
+    /// </summary>
+    protected override Assembly? Load(AssemblyName assemblyName)
+    {
+        var name = assemblyName.Name;
+        if (name == null)
+            return null;
+
+        if (ModCoreAssemblies.IsCore(name))
+            return null;
+
+        if (_host.TryGetLoadedSharedAssembly(name, out _))
+            return null;
+
+        return null;
+    }
+
+    /// <summary>
+    /// Native mods ARE allowed to load unmanaged DLLs — that is the
+    /// entire point of this ALC variant.
+    /// </summary>
+    protected override IntPtr LoadUnmanagedDll(string unmanagedDllName)
+    {
+        return base.LoadUnmanagedDll(unmanagedDllName);
+    }
+
+    /// <summary>
+    /// Returns the list of assembly file paths loaded by this context.
+    /// </summary>
+    public IReadOnlyList<string> GetLoadedPaths() => _assemblyPaths;
 }

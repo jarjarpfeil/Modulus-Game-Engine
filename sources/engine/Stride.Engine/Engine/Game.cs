@@ -409,6 +409,10 @@ namespace Stride.Engine
             if (Settings != null)
                 Streaming.SetStreamingSettings(Settings.Configurations.Get<StreamingSettings>());
             GameSystems.Add(Streaming);
+
+            // Load mods early to check for scene replacement before SceneSystem loads content
+            LoadModsEarly();
+
             GameSystems.Add(SceneSystem);
 
             // Add the Audio System
@@ -432,10 +436,61 @@ namespace Stride.Engine
             // Auto-discover and load mods on first frame (no game code required)
             GameSystems.Add(new Modding.ModAutoLoadSystem(Services));
 
+            // Initialize ModSceneManager for runtime scene switching
+            var modSceneManager = new Modding.ModSceneManager(Services);
+            Services.AddService(modSceneManager);
+
+            // Add scene switch system to process pending scene switches at end of frame
+            GameSystems.Add(new Modding.ModSceneSwitchSystem(Services));
+
             // TODO: data-driven?
             Content.Serializer.RegisterSerializer(new ImageSerializer());
 
             OnGameStarted(this);
+        }
+
+        /// <summary>
+        /// Loads mods early during initialization to check if any mod provides a replacement scene.
+        /// If a mod scene should replace the default scene, sets SceneSystem.InitialSceneUrl to the mod scene URL.
+        /// This allows the mod scene to be loaded during SceneSystem.LoadContent() instead of mid-frame,
+        /// avoiding rendering timing issues.
+        /// </summary>
+        private void LoadModsEarly()
+        {
+            var modHost = Services.GetService<ModHost>();
+            if (modHost == null) return;
+
+            // Only load if mods directory exists
+            if (!System.IO.Directory.Exists(modHost.ModsDirectory)) return;
+
+            try
+            {
+                // Load all mods
+                var loaded = modHost.LoadAllMods();
+                Log.Info($"[Game] Loaded {loaded.Count} mod(s) during initialization");
+
+                // Check if any mod provides a replacement scene
+                var allScenes = modHost.SceneManager.GetAllModScenes();
+                foreach (var entry in allScenes)
+                {
+                    if (entry.Behavior == Modulus.Modding.Api.ModSceneLoadBehavior.Replace)
+                    {
+                        ModSceneManager.OriginalSceneUrl = SceneSystem.InitialSceneUrl;
+                        SceneSystem.InitialSceneUrl = entry.SceneUrl;
+
+                        // Also set on ModSceneManager so it tracks the current scene
+                        var modSceneManager = Services.GetService<Modding.ModSceneManager>();
+                        modSceneManager?.SetInitialScene(entry.SceneUrl);
+
+                        Log.Info($"[Game] Mod scene '{entry.DisplayName}' will replace default scene");
+                        break;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"[Game] Failed to load mods early: {ex.Message}");
+            }
         }
 
         internal static DatabaseFileProvider InitializeAssetDatabase()

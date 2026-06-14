@@ -1,0 +1,69 @@
+Agent context:
+## Goal
+- Fix the mod scene replacement system so mods can replace the game's default scene and render correctly (not grey screen), and support runtime scene switching.
+
+## Constraints & Preferences
+- Always pass `-p:StrideNativeWindowsArm64Enabled=false` to every `dotnet build`
+- Use `build/Stride.Tests.Simple.slnf` for fast tests
+- `*.ssdeps` files lock during build — `find . -name "*.ssdeps" -delete` if rebuild fails
+- Test game location: `D:\TestGame\MyGame2\Bin\Windows\Debug\`
+- Engine DLL must be manually copied to test game output after each build (test game uses NuGet refs, not project refs)
+
+## Progress
+### Done
+- **Phase 1: Load mods during initialization** — `Game.cs` now calls `LoadModsEarly()` which loads mods and sets `SceneSystem.InitialSceneUrl` to mod scene URL before `SceneSystem.LoadContent()` runs
+- **Phase 5: Eager VisibilityGroup initialization** — `SceneSystem.SceneInstance` setter now calls `InitializeVisibilityGroup()` immediately, avoiding lazy creation inside `DrawCore()`
+- **Eager camera slot assignment in LoadContent** — `SceneSystem.LoadContent()` calls `AssignCameraToCompositorSlot()` after scene loads
+- **ModSceneManager service created** — `ModSceneManager.cs` handles scene caching, preloading, runtime switching; registered in `Game.Initialize()`
+- **ModSceneSwitchSystem created** — processes pending scene switches at end of frame (UpdateOrder=1000)
+- **ModAutoLoadSystem refactored** — no longer replaces SceneInstance; instead adds fallback camera/geometry to mod scene when missing
+- **AddFallbackContentIfNeeded** — detects missing camera/renderable geometry in mod scene, adds fallback camera with compositor slot assignment + fallback ground/marker cubes
+- **EnsureCameraProcessorRuns** — manually creates RenderContext and calls `SceneInstance.Draw(renderContext)` so `CameraProcessor.Draw()` attaches camera to compositor slot before first render
+- **Camera slot fix for existing cameras** — if mod scene camera has default slot (Guid.Empty), reassigns to compositor's "Main" slot
+- **ModSceneEntry class restored** — reverted accidental overwrite; `ModSceneManager` now has `GetAllModScenes()`, `GetPlayerSelectableScenes()`, `RegisterModScenes()`, `UnregisterModScenes()`, `FindEntry()`, `GetModScenes()`, `TotalEntryCount`, `ModSceneCount`
+- **AddVisibleGeometry fallback** — removed in favor of `AddFallbackContentIfNeeded`
+- **Build passes** with 0 errors after all fixes
+
+### In Progress
+- **Verifying rendering works** — log shows no `SceneCameraRenderer` "no camera assigned to slot" warning anymore (only the early `SceneSystem` warning from `LoadContent` before camera is added). Need visual confirmation that geometry actually renders.
+
+### Blocked
+- Cannot visually verify game window from CLI — screenshots capture wrong monitor or game is behind other windows. User must confirm visual output.
+
+## Key Decisions
+- **Load mods in `Game.Initialize()` before `SceneSystem`** — avoids mid-frame SceneInstance replacement which causes Material.New() effects to not compile and VisibilityGroup timing issues
+- **Don't replace SceneInstance** — creating a new SceneInstance mid-frame breaks effect compilation because the EffectSystem cache is cold and shader sources aren't found through DatabaseFileProvider
+- **Eager VisibilityGroup in SceneInstance setter** — ensures render processors exist before first draw
+- **Manual CameraProcessor.Draw() call** — bypasses normal Draw phase timing to attach camera to compositor slot before first render
+- **ModSceneManager for runtime switching** — deferred to end-of-frame via ModSceneSwitchSystem to avoid mid-frame issues
+- **ModSceneEntry in Stride.Engine.Modding** — test dependency requires this class to exist in this namespace
+
+## Next Steps
+1. **Verify rendering visually** — user needs to confirm the game window shows rendered geometry (green ground, red marker) instead of grey
+2. **If rendering works**: run tests with `dotnet test` to ensure no regressions
+3. **If rendering still broken**: investigate why SceneCameraRenderer still can't find the camera despite CameraProcessor.Draw() running successfully — possible issue with RenderContext tags or Draw() not iterating CameraProcessor
+4. **Phase 3: Effect compilation** — ensure Material.New() materials can compile effects (mount mod shaders in VFS)
+5. **Clean up debug logging** — remove verbose diagnostic logs once rendering is confirmed working
+
+## Critical Context
+- **Root cause of grey screen**: Creating a new `SceneInstance` mid-frame means `Material.New()` effects never compile (EffectSystem cache cold, no shader sources through DatabaseFileProvider) AND `VisibilityGroup` is created inside `DrawCore()` where `Reset()` clears `ObjectNode` immediately after mesh creation
+- **Why "add to existing" partially worked**: The existing SceneInstance had a warm EffectSystem cache from the original scene, so new material permutations compiled (shader warnings appeared). But user's geometry was hidden behind default scene's sphere/plane
+- **SceneCameraRenderer.Camera** is set via `ref!! 2C917432-...` in compositor YAML — it references the same `SceneCameraSlot` object as `GraphicsComeras[0]` (reference type, so setting `.Camera` on the slot should be visible to the renderer)
+- **Test game uses NuGet packages** — must manually copy updated `Stride.Engine.dll` to `D:\TestGame\MyGame2\Bin\Windows\Debug\` after each build
+- **Second monitor at X=-2560** — game window may open on secondary screen; previous screenshots captured Firefox video on secondary monitor, not the game
+- **No `SceneCameraRenderer` "no camera assigned" warning** in latest run — only `[SceneSystem] No camera entity found in scene` from LoadContent (expected, runs before ModAutoLoadSystem.Update adds camera)
+
+## Relevant Files
+- `sources/engine/Stride.Engine/Engine/Game.cs:458` — `LoadModsEarly()` loads mods, sets `SceneSystem.InitialSceneUrl`, registers ModSceneManager service
+- `sources/engine/Stride.Engine/Engine/Game.cs:436` — `ModSceneManager` registration and `ModSceneSwitchSystem` added to GameSystems
+- `sources/engine/Stride.Engine/Engine/SceneSystem.cs:56` — `SceneInstance` setter calls `InitializeVisibilityGroup()`
+- `sources/engine/Stride.Engine/Engine/SceneSystem.cs:73` — `InitializeVisibilityGroup()` creates VisibilityGroup eagerly
+- `sources/engine/Stride.Engine/Engine/SceneSystem.cs:112` — `AssignCameraToCompositorSlot()` assigns first camera to compositor slot during LoadContent
+- `sources/engine/Stride.Engine/Engine/SceneSystem.cs:170` — `LoadContent()` calls `AssignCameraToCompositorSlot()` after scene loads
+- `sources/engine/Stride.Engine/Modding/ModSceneManager.cs` — full rewrite: scene caching, RegisterModScenes/UnregisterModScenes, SwitchToScene, EnsureCameraProcessorRuns
+- `sources/engine/Stride.Engine/Modding/ModAutoLoadSystem.cs` — refactored: no scene replacement, adds `AddFallbackContentIfNeeded()` and `EnsureCameraProcessorRuns()`
+- `sources/engine/Stride.Engine/Modding/ModSceneSwitchSystem.cs` — new GameSystem (UpdateOrder=1000) processes pending scene switches
+- `sources/engine/Stride.Engine\Modding\ModSceneEntry.cs` — entry class with ModId, SceneUrl, DisplayName, Behavior, IsPlayerSelectable
+- `tests/integration/space-escape-mods/mod-assets/mod.json` — declares 6 assets + 1 scene
+- `D:\TestGame\MyGame2\Bin\Windows\Debug\mods\` — contains 6 mod directories (mod-assets, mod-rendering, etc.)
+- `D:\TestGame\MyGame2\Bin\Windows\Debug\data\db\index` — asset database index

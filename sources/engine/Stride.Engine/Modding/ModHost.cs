@@ -40,6 +40,13 @@ public class ModHost
     private readonly ModSceneManager _sceneManager;
     private ModStateStore? _stateStore;
 
+    /// <summary>
+    /// Raised when a native mod (RequiresNativeCode = true) is successfully loaded.
+    /// The UI layer should display a critical security warning:
+    /// "This mod executes unmanaged native code and cannot be hot-reloaded."
+    /// </summary>
+    public event Action<ModPackage>? OnNativeModLoaded;
+
     /// <summary>Path to the mods/ directory. Defaults to "mods" relative to game content.</summary>
     public string ModsDirectory { get; set; } = "mods";
 
@@ -195,29 +202,57 @@ public class ModHost
         if (_loadedMods.ContainsKey(manifest.Id))
             throw new InvalidOperationException($"Mod '{manifest.Id}' is already loaded. Unload it first.");
 
-        // Create package and load assemblies
+        // Create package
         var package = new ModPackage(manifest, modDirectory);
-        package.LoadAssemblies(this);
 
-        // Discover the main mod assembly (first non-core DLL loaded)
-        if (package.LoadContext != null)
+        // Security: Check if mod requires native code
+        if (manifest.RequiresNativeCode)
         {
-            foreach (var asm in package.LoadContext.Assemblies)
+            var securityConfig = _services.GetService<ModSecurityConfig>();
+            if (securityConfig == null || !securityConfig.EnableNativeModLoading)
             {
-                if (!IsCoreApiAssembly(asm.GetName().Name))
-                {
-                    package.ModAssembly = asm;
-                    break;
-                }
+                Log.Error($"[ModHost] Mod '{manifest.Id}' requires native code execution but " +
+                    "EnableNativeModLoading is not enabled in security config. Aborting load.");
+                package.State = ModState.Errored;
+                package.ErrorReason = "Mod requires native code execution. Enable EnableNativeModLoading in security config.";
+                _loadedMods[manifest.Id] = package;
+                return package;
             }
+
+            // Load into non-collectible native ALC (bypass collectible ModLoadContext)
+            package.LoadNativeAssemblies(this);
+
+            // Raise event so UI can display security warning
+            Log.Warning($"[ModHost] SECURITY WARNING: Mod '{manifest.Id}' executes unmanaged native code. " +
+                "This mod cannot be hot-reloaded.");
+            OnNativeModLoaded?.Invoke(package);
+        }
+        else
+        {
+            // Standard path: load into collectible ALC
+            package.LoadAssemblies(this);
         }
 
-        // Register assembly with the shared map
-        if (package.ModAssembly != null)
+        // Discover the main mod assembly (first non-core DLL loaded) and register
+        // all non-core assemblies into the shared map so other mods can resolve
+        // cross-ALC types (e.g. a collectible mod referencing a native mod's types).
+        var alcAssemblies = package.LoadContext?.Assemblies
+            ?? package.NativeLoadContext?.Assemblies
+            ?? Enumerable.Empty<Assembly>();
+        foreach (var asm in alcAssemblies)
         {
-            var name = package.ModAssembly.GetName().Name;
-            if (name != null)
-                _sharedAssemblies[name] = package.ModAssembly;
+            var asmName = asm.GetName().Name;
+            if (asmName == null) continue;
+
+            // Register every non-core assembly into the shared map
+            if (!IsCoreApiAssembly(asmName))
+            {
+                _sharedAssemblies[asmName] = asm;
+
+                // Track the first non-core assembly as the "main" mod assembly
+                if (package.ModAssembly == null)
+                    package.ModAssembly = asm;
+            }
         }
 
         // Register types with serialization system
@@ -556,8 +591,6 @@ public class ModHost
 
     private static bool IsCoreApiAssembly(string? name)
     {
-        if (name == null) return false;
-        return name.StartsWith("Stride.", StringComparison.OrdinalIgnoreCase)
-            || name.Equals("Modulus.Modding.Api", StringComparison.OrdinalIgnoreCase);
+        return ModCoreAssemblies.IsCore(name);
     }
 }

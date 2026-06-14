@@ -139,7 +139,7 @@ public sealed class ModLifecycleManager
         WeakReference alcWeakRef = new(package.LoadContext!);
 
         // ─── Step 12: Unload ALC ───
-        package.UnloadAssemblies();
+        package.Unload();
 
         // ─── Step 13-15: Force GC (2 cycles as per plan) ───
         for (int i = 0; i < 2; i++)

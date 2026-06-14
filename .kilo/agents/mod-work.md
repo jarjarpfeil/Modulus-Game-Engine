@@ -1,7 +1,6 @@
 ---
 description: Write, debug, and verify Modulus Engine mods. Use this agent for ALC isolation issues, mod project recipe, mod lifecycle, modding API patterns, or any code in sources/engine/Stride.Engine/Modding/. Encapsulates the full mod-recipe knowledge.
 mode: subagent
-model: opencode-go/deepseek-v4-flash
 steps: 40
 permission:
   bash: allow

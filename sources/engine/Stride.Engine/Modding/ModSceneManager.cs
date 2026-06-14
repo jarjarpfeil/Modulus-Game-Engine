@@ -3,583 +3,290 @@
 
 using System;
 using System.Collections.Generic;
-using System.IO;
+using System.Linq;
 using Modulus.Modding.Api;
 using Stride.Core;
 using Stride.Core.Diagnostics;
-using Stride.Core.Mathematics;
-using Stride.Core.Serialization.Contents;
-using Stride.Graphics;
-using Stride.Rendering;
-using Stride.Rendering.Materials;
-using Stride.Rendering.Materials.ComputeColors;
 
 namespace Stride.Engine.Modding;
 
 /// <summary>
-/// Discovers scene assets in loaded mods, resolves their declared load behavior,
-/// and provides a scene catalog for games to present to players.
-///
-/// When a mod ships scenes with no explicit <see cref="ModSceneLoadBehavior"/>,
-/// they are added to the <see cref="GetPlayerSelectableScenes"/> catalog so the
-/// game can present a scene selection UI.
-///
-/// Callbacks:
-/// - <see cref="RegisterModScenes"/> — called by <see cref="ModHost.LoadMod"/> after content registration.
-/// - <see cref="UnregisterModScenes"/> — called by <see cref="ModHost.UnloadMod"/> during cleanup.
+/// Represents a scene entry registered by a mod.
+/// </summary>
+public sealed class ModSceneEntry
+{
+    /// <summary>The mod ID that registered this scene.</summary>
+    public string ModId { get; set; } = string.Empty;
+
+    /// <summary>The URL/path to the scene asset.</summary>
+    public string SceneUrl { get; set; } = string.Empty;
+
+    /// <summary>Human-readable display name for UI menus.</summary>
+    public string DisplayName { get; set; } = string.Empty;
+
+    /// <summary>How this scene integrates with the host game.</summary>
+    public Modulus.Modding.Api.ModSceneLoadBehavior Behavior { get; set; }
+
+    /// <summary>Whether this scene is player-selectable (MenuSelect behavior).</summary>
+    public bool IsPlayerSelectable => Behavior == Modulus.Modding.Api.ModSceneLoadBehavior.MenuSelect;
+}
+
+/// <summary>
+/// Manages scene lifecycle for mods, enabling runtime scene switching.
+/// Provides pre-loading of scenes for fast switching and handles scene unloading to prevent memory leaks.
 /// </summary>
 public class ModSceneManager
 {
     private static readonly Logger Log = GlobalLogger.GetLogger("ModSceneManager");
 
     private readonly IServiceRegistry _services;
+    private readonly Dictionary<string, Scene> _cachedScenes = new();
+    private readonly HashSet<string> _preloadedScenes = new();
+    private readonly List<ModSceneEntry> _registeredScenes = new();
+    private string _pendingSceneUrl;
+    private string _currentSceneUrl;
 
-    /// <summary>Per-mod scene entries indexed by mod ID.</summary>
-    private readonly Dictionary<string, List<ModSceneEntry>> _modScenes =
-        new(StringComparer.OrdinalIgnoreCase);
-
-    /// <summary>Currently loaded scene instances, keyed by "modId:sceneUrl".</summary>
-    private readonly Dictionary<string, Scene> _loadedScenes =
-        new(StringComparer.OrdinalIgnoreCase);
+    public static string OriginalSceneUrl { get; set; }
 
     public ModSceneManager(IServiceRegistry services)
     {
-        _services = services ?? throw new ArgumentNullException(nameof(services));
+        _services = services;
     }
 
-    // ──────────────────────────────────────────────
-    //  Catalog — called by ModHost
-    // ──────────────────────────────────────────────
-
     /// <summary>
-    /// Scans a mod package's <see cref="ModManifest.Scenes"/> and registers them
-    /// in the scene catalog. Safe to call multiple times (idempotent per modId).
+    /// Gets all registered mod scenes.
     /// </summary>
-    public void RegisterModScenes(ModPackage package)
+    public IReadOnlyList<ModSceneEntry> GetAllModScenes()
     {
-        var manifest = package.Manifest;
-        if (manifest.Scenes == null || manifest.Scenes.Count == 0)
-            return;
-
-        // Replace existing entries (supports mod reload)
-        _modScenes.Remove(manifest.Id);
-
-        var entries = new List<ModSceneEntry>(manifest.Scenes.Count);
-        foreach (var decl in manifest.Scenes)
-        {
-            if (string.IsNullOrWhiteSpace(decl.Path))
-            {
-                Log.Warning($"[ModSceneManager] Mod '{manifest.Id}' has a scene entry with empty path — skipped");
-                continue;
-            }
-
-            var displayName = decl.Name ?? Path.GetFileNameWithoutExtension(decl.Path);
-            var behavior = decl.ParsedBehavior;
-
-            entries.Add(new ModSceneEntry(manifest.Id, decl.Path, displayName, behavior));
-            Log.Info($"[ModSceneManager] Registered scene: {displayName} [{behavior}] (mod: {manifest.Id})");
-        }
-
-        if (entries.Count > 0)
-            _modScenes[manifest.Id] = entries;
+        return _registeredScenes;
     }
 
     /// <summary>
-    /// Removes all scene entries for a mod and unloads any scenes it had loaded.
-    /// </summary>
-    public void UnregisterModScenes(string modId)
-    {
-        // Unload any scenes this mod still has loaded
-        var sceneKeys = new List<string>();
-        foreach (var key in _loadedScenes.Keys)
-        {
-            if (key.StartsWith(modId + ":", StringComparison.OrdinalIgnoreCase))
-                sceneKeys.Add(key);
-        }
-        foreach (var key in sceneKeys)
-        {
-            try
-            {
-                UnloadSceneByKey(key);
-            }
-            catch (Exception ex)
-            {
-                Log.Warning($"[ModSceneManager] Error unloading scene '{key}' during mod unload: {ex.Message}");
-            }
-        }
-
-        _modScenes.Remove(modId);
-        Log.Info($"[ModSceneManager] Unregistered scenes for mod '{modId}'");
-    }
-
-    // ──────────────────────────────────────────────
-    //  Catalog queries
-    // ──────────────────────────────────────────────
-
-    /// <summary>
-    /// Returns all scenes with no explicit behavior (or <see cref="ModSceneLoadBehavior.MenuSelect"/>).
-    /// These are scenes the game should present to the player for selection.
+    /// Gets player-selectable scenes (those with Replace behavior).
     /// </summary>
     public IReadOnlyList<ModSceneEntry> GetPlayerSelectableScenes()
     {
-        var result = new List<ModSceneEntry>();
-        foreach (var (_, entries) in _modScenes)
-        {
-            foreach (var entry in entries)
-            {
-                if (entry.IsPlayerSelectable)
-                    result.Add(entry);
-            }
-        }
-        return result;
-    }
-
-    /// <summary>Returns all scenes across every loaded mod.</summary>
-    public IReadOnlyList<ModSceneEntry> GetAllModScenes()
-    {
-        var result = new List<ModSceneEntry>();
-        foreach (var (_, entries) in _modScenes)
-            result.AddRange(entries);
-        return result;
-    }
-
-    /// <summary>Returns all scenes for a specific mod.</summary>
-    public IReadOnlyList<ModSceneEntry> GetModScenes(string modId)
-    {
-        return _modScenes.TryGetValue(modId, out var entries) ? entries : [];
+        return _registeredScenes.Where(s => s.Behavior == Modulus.Modding.Api.ModSceneLoadBehavior.Replace).ToList();
     }
 
     /// <summary>
-    /// Finds a scene entry by mod ID and scene path.
+    /// Find a specific scene entry by mod ID and scene URL.
     /// </summary>
     public ModSceneEntry? FindEntry(string modId, string sceneUrl)
     {
-        if (!_modScenes.TryGetValue(modId, out var entries))
-            return null;
-
-        foreach (var entry in entries)
-        {
-            if (string.Equals(entry.SceneUrl, sceneUrl, StringComparison.OrdinalIgnoreCase))
-                return entry;
-        }
-        return null;
+        return _registeredScenes.FirstOrDefault(s => s.ModId == modId && s.SceneUrl == sceneUrl);
     }
-
-    /// <summary>Returns the number of mods with registered scenes.</summary>
-    public int ModSceneCount => _modScenes.Count;
-
-    /// <summary>Returns the total number of scene entries across all mods.</summary>
-    public int TotalEntryCount
-    {
-        get
-        {
-            int count = 0;
-            foreach (var (_, entries) in _modScenes)
-                count += entries.Count;
-            return count;
-        }
-    }
-
-    // ──────────────────────────────────────────────
-    //  Scene loading
-    // ──────────────────────────────────────────────
 
     /// <summary>
-    /// Loads a mod scene and applies its declared behavior.
-    /// Uses <see cref="ContentManager"/> to resolve the scene asset URL
-    /// (requires a compiled asset database in the mod).
-    ///
-    /// Behavior handling:
-    /// - <see cref="ModSceneLoadBehavior.Replace"/>: replaces the active <see cref="SceneSystem.SceneInstance"/>.
-    /// - <see cref="ModSceneLoadBehavior.Additive"/>: adds the scene as a child of the root scene.
-    /// - <see cref="ModSceneLoadBehavior.MenuSelect"/> and <see cref="ModSceneLoadBehavior.Background"/>:
-    ///   loaded additively (the game is responsible for any special handling).
+    /// Gets all scenes registered by a specific mod.
     /// </summary>
-    /// <param name="modId">The mod that owns the scene.</param>
-    /// <param name="sceneUrl">The scene asset URL within the mod (from mod.json).</param>
-    /// <returns>The loaded scene, or null on failure.</returns>
-    public Scene? LoadScene(string modId, string sceneUrl)
+    public IReadOnlyList<ModSceneEntry> GetModScenes(string modId)
     {
-        var key = $"{modId}:{sceneUrl}";
+        return _registeredScenes.Where(s => s.ModId == modId).ToList();
+    }
 
-        // Already loaded?
-        if (_loadedScenes.ContainsKey(key))
+    /// <summary>
+    /// Gets the total number of registered scene entries across all mods.
+    /// </summary>
+    public int TotalEntryCount => _registeredScenes.Count;
+
+    /// <summary>
+    /// Gets the number of mods that have registered scenes.
+    /// </summary>
+    public int ModSceneCount => _registeredScenes.Select(s => s.ModId).Distinct().Count();
+
+    /// <summary>
+    /// Register scenes from a mod package. Called by ModHost when a mod is loaded.
+    /// </summary>
+    public void RegisterModScenes(ModPackage package)
+    {
+        if (package?.Manifest?.Scenes == null) return;
+
+        foreach (var sceneEntry in package.Manifest.Scenes)
         {
-            Log.Warning($"[ModSceneManager] Scene '{key}' is already loaded");
-            return _loadedScenes[key];
+            // Check if already registered
+            if (_registeredScenes.Any(s => s.SceneUrl == sceneEntry.Path && s.ModId == package.Manifest.Id))
+            {
+                Log.Debug($"[ModSceneManager] Scene already registered: {sceneEntry.Path} from {package.Manifest.Id}");
+                continue;
+            }
+
+            var entry = new ModSceneEntry
+            {
+                ModId = package.Manifest.Id,
+                SceneUrl = sceneEntry.Path,
+                DisplayName = sceneEntry.Name ?? sceneEntry.Path,
+                Behavior = sceneEntry.ParsedBehavior,
+            };
+
+            _registeredScenes.Add(entry);
+            Log.Info($"[ModSceneManager] Registered scene: {entry.DisplayName} ({entry.SceneUrl}) from {entry.ModId}");
+        }
+    }
+
+    /// <summary>
+    /// Unregister all scenes from a mod. Called by ModHost when a mod is unloaded.
+    /// </summary>
+    public void UnregisterModScenes(string modId)
+    {
+        var removed = _registeredScenes.RemoveAll(s => s.ModId == modId);
+        if (removed > 0)
+        {
+            Log.Info($"[ModSceneManager] Unregistered {removed} scene(s) from {modId}");
+        }
+    }
+
+    /// <summary>
+    /// Pre-load a scene into memory for fast switching later.
+    /// Call this during mod initialization to avoid load delays.
+    /// Scenes are kept in memory until explicitly unloaded.
+    /// </summary>
+    public void PreloadScene(string sceneUrl)
+    {
+        if (_preloadedScenes.Contains(sceneUrl))
+        {
+            Log.Debug($"[ModSceneManager] Scene already preloaded: {sceneUrl}");
+            return;
         }
 
-        var contentManager = _services.GetService<ContentManager>();
-        if (contentManager == null)
+        var contentManager = _services.GetService<Stride.Core.Serialization.Contents.ContentManager>();
+        if (contentManager == null || !contentManager.Exists(sceneUrl))
         {
-            Log.Error("[ModSceneManager] ContentManager not available — cannot load scene");
-            return null;
+            Log.Warning($"[ModSceneManager] Cannot preload scene: {sceneUrl} (not found)");
+            return;
         }
 
-        // Find the mod package to get its directory
-        var modHost = _services.GetService<ModHost>();
-        ModPackage? package = null;
-        if (modHost?.LoadedMods.TryGetValue(modId, out var pkg) == true)
-            package = pkg;
-
-        Scene? scene = null;
-
-        // Strategy 1: Try ContentManager (works when asset.db or compiled assets exist)
-        // Note: We always try Load() regardless of Exists() result because Exists() only checks
-        // the primary provider's ContentIndexMap, while Load() has TryLoadFromComposite fallback
-        // that checks all composite providers (including mod ObjectDatabases).
         try
         {
-            scene = contentManager.Load<Scene>(sceneUrl);
-            if (scene != null)
-                Log.Info($"[ModSceneManager] Loaded scene '{sceneUrl}' via ContentManager (mod: {modId})");
+            var scene = contentManager.Load<Scene>(sceneUrl);
+            _cachedScenes[sceneUrl] = scene;
+            _preloadedScenes.Add(sceneUrl);
+            Log.Info($"[ModSceneManager] Preloaded scene: {sceneUrl} ({scene.Entities.Count} entities)");
         }
         catch (Exception ex)
         {
-            Log.Warning($"[ModSceneManager] ContentManager load failed for '{sceneUrl}': {ex.Message}");
+            Log.Error($"[ModSceneManager] Failed to preload scene {sceneUrl}: {ex.Message}");
         }
+    }
 
-        // Strategy 2: Try direct file loading from mod directory
-        if (scene == null && package != null)
+    /// <summary>
+    /// Unload a pre-loaded scene from memory.
+    /// Call this when a scene is no longer needed to free memory.
+    /// </summary>
+    public void UnloadScene(string sceneUrl)
+    {
+        if (!_cachedScenes.TryGetValue(sceneUrl, out var scene))
+            return;
+
+        // Don't unload the current scene
+        if (sceneUrl == _currentSceneUrl)
         {
-            scene = TryLoadSceneFromFile(package.ModDirectory, sceneUrl);
-            if (scene != null)
-                Log.Info($"[ModSceneManager] Loaded scene '{sceneUrl}' from mod file (mod: {modId})");
+            Log.Warning($"[ModSceneManager] Cannot unload current scene: {sceneUrl}");
+            return;
         }
 
-        if (scene == null)
+        _cachedScenes.Remove(sceneUrl);
+        _preloadedScenes.Remove(sceneUrl);
+
+        // Release the scene reference (GC will clean up)
+        Log.Info($"[ModSceneManager] Unloaded scene: {sceneUrl}");
+    }
+
+    /// <summary>
+    /// Switch to a different scene at runtime.
+    /// The switch happens at the end of the current frame to avoid timing issues.
+    /// </summary>
+    public void SwitchToScene(string sceneUrl)
+    {
+        if (sceneUrl == _currentSceneUrl)
         {
-            Log.Warning($"[ModSceneManager] Could not load scene '{sceneUrl}' (mod: {modId}) — no compiled asset.db and no matching .sdscene file");
-            return null;
+            Log.Debug($"[ModSceneManager] Already on scene: {sceneUrl}");
+            return;
         }
 
-        // Determine behavior
-        var entry = FindEntry(modId, sceneUrl);
-        var behavior = entry?.Behavior ?? ModSceneLoadBehavior.MenuSelect;
+        _pendingSceneUrl = sceneUrl;
+        Log.Info($"[ModSceneManager] Scene switch requested: {sceneUrl}");
+    }
 
-        // Apply behavior
+    /// <summary>
+    /// Get the URL of the currently active scene.
+    /// </summary>
+    public string CurrentSceneUrl => _currentSceneUrl;
+
+    /// <summary>
+    /// Check if a scene is pre-loaded.
+    /// </summary>
+    public bool IsScenePreloaded(string sceneUrl)
+    {
+        return _preloadedScenes.Contains(sceneUrl);
+    }
+
+    /// <summary>
+    /// Called by ModSceneSwitchSystem to process pending scene switches.
+    /// This runs at the end of each frame to ensure clean transitions.
+    /// </summary>
+    internal void ProcessPendingSwitch()
+    {
+        if (string.IsNullOrEmpty(_pendingSceneUrl))
+            return;
+
+        var sceneUrl = _pendingSceneUrl;
+        _pendingSceneUrl = null;
+
         var sceneSystem = _services.GetService<SceneSystem>();
-        Scene sceneToActivate = scene;
-        switch (behavior)
+        if (sceneSystem == null)
         {
-            case ModSceneLoadBehavior.Replace:
-                if (sceneSystem != null)
-                {
-                    // Create a fresh scene and move entities from the deserialized scene.
-                    // Entities can't be in two scenes simultaneously, so we remove from
-                    // the old scene first, then add to the fresh one.
-                    var freshScene = new Scene();
-                    var entitiesToMove = new List<Entity>(scene.Entities);
-                    foreach (var entity in entitiesToMove)
-                    {
-                        scene.Entities.Remove(entity);
-                        freshScene.Entities.Add(entity);
-                    }
-                    EnsureSceneHasRenderables(freshScene);
-                    sceneToActivate = freshScene;
-                    sceneSystem.SceneInstance = new SceneInstance(_services, freshScene);
-                    WireCameraSlots(freshScene, sceneSystem);
-                    Log.Info($"[ModSceneManager] Replaced active scene with '{key}'");
-                }
-                else
-                {
-                    Log.Warning("[ModSceneManager] SceneSystem not available — scene loaded but not activated");
-                }
-                break;
-
-            case ModSceneLoadBehavior.Additive:
-            case ModSceneLoadBehavior.MenuSelect:
-            case ModSceneLoadBehavior.Background:
-                if (sceneSystem?.SceneInstance?.RootScene != null)
-                {
-                    sceneSystem.SceneInstance.RootScene.Children.Add(scene);
-                    Log.Info($"[ModSceneManager] Additively loaded scene '{key}'");
-                }
-                else
-                {
-                    Log.Warning("[ModSceneManager] No active root scene — scene loaded but not attached");
-                }
-                break;
-        }
-
-        _loadedScenes[key] = sceneToActivate;
-        return scene;
-    }
-
-    /// <summary>
-    /// Unloads a mod scene and removes it from the scene graph.
-    /// </summary>
-    public void UnloadScene(string modId, string sceneUrl)
-    {
-        var key = $"{modId}:{sceneUrl}";
-        UnloadSceneByKey(key);
-    }
-
-    private void UnloadSceneByKey(string key)
-    {
-        if (!_loadedScenes.TryGetValue(key, out var scene))
-            return;
-
-        // Remove from parent's Children collection
-        if (scene.Parent != null)
-        {
-            scene.Parent.Children.Remove(scene);
-        }
-
-        // If it's the root scene of a SceneInstance, set to empty scene
-        var sceneSystem = _services.GetService<SceneSystem>();
-        if (sceneSystem?.SceneInstance?.RootScene == scene)
-        {
-            sceneSystem.SceneInstance = new SceneInstance(_services, new Scene());
-        }
-
-        // Dispose the scene
-        try
-        {
-            scene.Dispose();
-        }
-        catch (Exception ex)
-        {
-            Log.Warning($"[ModSceneManager] Error disposing scene '{key}': {ex.Message}");
-        }
-
-        _loadedScenes.Remove(key);
-        Log.Info($"[ModSceneManager] Unloaded scene '{key}'");
-    }
-
-    /// <summary>
-    /// Attempts to load a scene directly from a .sdscene file in the mod directory.
-    /// This is a fallback for when no compiled asset.db exists.
-    /// Returns null if the file doesn't exist or can't be loaded.
-    /// </summary>
-    private Scene? TryLoadSceneFromFile(string modDirectory, string sceneUrl)
-    {
-        // Map URL to file path: "assets/Scene.sdscene" → modDir/assets/Scene.sdscene
-        var filePath = Path.Combine(modDirectory, sceneUrl.Replace('/', Path.DirectorySeparatorChar));
-
-        // Try .sdscene extension if not present
-        if (!File.Exists(filePath) && !filePath.EndsWith(".sdscene"))
-            filePath += ".sdscene";
-
-        if (!File.Exists(filePath))
-        {
-            // Try looking in the assets subdirectory
-            filePath = Path.Combine(modDirectory, "assets", Path.GetFileName(sceneUrl));
-            if (!File.Exists(filePath) && !filePath.EndsWith(".sdscene"))
-                filePath += ".sdscene";
-
-            if (!File.Exists(filePath))
-                return null;
-        }
-
-        // For now, direct file loading of .sdscene requires the content pipeline.
-        // The composite provider chain handles compiled assets automatically.
-        Log.Info($"[ModSceneManager] Found scene file '{filePath}' — requires compiled asset.db for loading");
-        return null;
-    }
-
-    /// <summary>Returns the number of currently loaded scene instances.</summary>
-    public int LoadedSceneInstanceCount => _loadedScenes.Count;
-
-    /// <summary>
-    /// Assigns unassigned CameraComponents to the GraphicsCompositor's camera slots.
-    /// Mod scenes are compiled without knowledge of the runtime compositor, so cameras
-    /// need their Slot wired after the scene is activated.
-    /// </summary>
-    private void WireCameraSlots(Scene scene, SceneSystem sceneSystem)
-    {
-        var compositor = sceneSystem.GraphicsCompositor;
-        if (compositor?.Cameras == null || compositor.Cameras.Count == 0)
-            return;
-
-        var firstSlot = compositor.Cameras[0];
-        var slotId = firstSlot.ToSlotId();
-
-        foreach (var entity in scene.Entities)
-        {
-            var camera = entity.Get<CameraComponent>();
-            if (camera != null && camera.Slot == default)
-            {
-                camera.Slot = slotId;
-                Log.Info($"[ModSceneManager] Assigned camera '{entity.Name}' to compositor slot '{firstSlot.Name ?? "Main"}'");
-            }
-        }
-    }
-
-    /// <summary>
-    /// Ensures a scene has renderable geometry. Compiled mod scenes contain only data-only
-    /// components (camera, light, transforms) because GPU buffers can't be created without
-    /// a GraphicsDevice at compile time. This adds a ground plane and marker cube so the
-    /// scene is visually non-empty. Must be called BEFORE setting the SceneInstance.
-    /// </summary>
-    private void EnsureSceneHasRenderables(Scene scene)
-    {
-        bool hasRenderable = false;
-        foreach (var entity in scene.Entities)
-        {
-            if (entity.Get<ModelComponent>() != null)
-            {
-                hasRenderable = true;
-                break;
-            }
-        }
-
-        if (hasRenderable)
-            return;
-
-        var graphicsDevice = (_services.GetService<IGraphicsDeviceService>())?.GraphicsDevice;
-        if (graphicsDevice == null)
-        {
-            Log.Warning("[ModSceneManager] Cannot add renderables — GraphicsDevice not available");
+            Log.Error("[ModSceneManager] SceneSystem not available");
             return;
         }
 
-        var ground = CreateColoredCube(graphicsDevice,
-            "Ground",
-            new Stride.Core.Mathematics.Vector3(0, -0.5f, 0),
-            new Stride.Core.Mathematics.Vector3(50, 1, 50),
-            new Stride.Core.Mathematics.Color4(0.25f, 0.6f, 0.3f, 1f));
-        scene.Entities.Add(ground);
-
-        var marker = CreateColoredCube(graphicsDevice,
-            "Marker",
-            new Stride.Core.Mathematics.Vector3(0, 1.5f, 0),
-            new Stride.Core.Mathematics.Vector3(2, 3, 2),
-            new Stride.Core.Mathematics.Color4(0.9f, 0.2f, 0.2f, 1f));
-        scene.Entities.Add(marker);
-
-        Log.Info("[ModSceneManager] Added ground plane + marker cube to mod scene");
-    }
-
-    private static Entity CreateColoredCube(GraphicsDevice graphicsDevice, string name,
-        Stride.Core.Mathematics.Vector3 position, Stride.Core.Mathematics.Vector3 scale,
-        Stride.Core.Mathematics.Color4 color)
-    {
-        var material = Material.New(graphicsDevice, new MaterialDescriptor
+        // Get the scene (from cache or load it)
+        Scene scene;
+        if (_cachedScenes.TryGetValue(sceneUrl, out var cachedScene))
         {
-            Attributes = new MaterialAttributes
+            scene = cachedScene;
+            Log.Debug($"[ModSceneManager] Using cached scene: {sceneUrl}");
+        }
+        else
+        {
+            var contentManager = _services.GetService<Stride.Core.Serialization.Contents.ContentManager>();
+            if (contentManager == null || !contentManager.Exists(sceneUrl))
             {
-                Diffuse = new MaterialDiffuseMapFeature(new ComputeColor { Value = color }),
-                DiffuseModel = new MaterialDiffuseLambertModelFeature(),
+                Log.Error($"[ModSceneManager] Cannot load scene: {sceneUrl} (not found)");
+                return;
             }
-        });
 
-        var vertices = new Stride.Graphics.VertexPositionNormalTexture[]
-        {
-            new(new Stride.Core.Mathematics.Vector3(-0.5f, -0.5f,  0.5f), Stride.Core.Mathematics.Vector3.UnitZ, Stride.Core.Mathematics.Vector2.Zero),
-            new(new Stride.Core.Mathematics.Vector3( 0.5f, -0.5f,  0.5f), Stride.Core.Mathematics.Vector3.UnitZ, Stride.Core.Mathematics.Vector2.UnitX),
-            new(new Stride.Core.Mathematics.Vector3( 0.5f,  0.5f,  0.5f), Stride.Core.Mathematics.Vector3.UnitZ, Stride.Core.Mathematics.Vector2.One),
-            new(new Stride.Core.Mathematics.Vector3(-0.5f,  0.5f,  0.5f), Stride.Core.Mathematics.Vector3.UnitZ, Stride.Core.Mathematics.Vector2.UnitY),
-            new(new Stride.Core.Mathematics.Vector3( 0.5f, -0.5f, -0.5f), -Stride.Core.Mathematics.Vector3.UnitZ, Stride.Core.Mathematics.Vector2.Zero),
-            new(new Stride.Core.Mathematics.Vector3(-0.5f, -0.5f, -0.5f), -Stride.Core.Mathematics.Vector3.UnitZ, Stride.Core.Mathematics.Vector2.UnitX),
-            new(new Stride.Core.Mathematics.Vector3(-0.5f,  0.5f, -0.5f), -Stride.Core.Mathematics.Vector3.UnitZ, Stride.Core.Mathematics.Vector2.One),
-            new(new Stride.Core.Mathematics.Vector3( 0.5f,  0.5f, -0.5f), -Stride.Core.Mathematics.Vector3.UnitZ, Stride.Core.Mathematics.Vector2.UnitY),
-            new(new Stride.Core.Mathematics.Vector3(-0.5f,  0.5f,  0.5f), Stride.Core.Mathematics.Vector3.UnitY, Stride.Core.Mathematics.Vector2.Zero),
-            new(new Stride.Core.Mathematics.Vector3( 0.5f,  0.5f,  0.5f), Stride.Core.Mathematics.Vector3.UnitY, Stride.Core.Mathematics.Vector2.UnitX),
-            new(new Stride.Core.Mathematics.Vector3( 0.5f,  0.5f, -0.5f), Stride.Core.Mathematics.Vector3.UnitY, Stride.Core.Mathematics.Vector2.One),
-            new(new Stride.Core.Mathematics.Vector3(-0.5f,  0.5f, -0.5f), Stride.Core.Mathematics.Vector3.UnitY, Stride.Core.Mathematics.Vector2.UnitY),
-            new(new Stride.Core.Mathematics.Vector3(-0.5f, -0.5f, -0.5f), -Stride.Core.Mathematics.Vector3.UnitY, Stride.Core.Mathematics.Vector2.Zero),
-            new(new Stride.Core.Mathematics.Vector3( 0.5f, -0.5f, -0.5f), -Stride.Core.Mathematics.Vector3.UnitY, Stride.Core.Mathematics.Vector2.UnitX),
-            new(new Stride.Core.Mathematics.Vector3( 0.5f, -0.5f,  0.5f), -Stride.Core.Mathematics.Vector3.UnitY, Stride.Core.Mathematics.Vector2.One),
-            new(new Stride.Core.Mathematics.Vector3(-0.5f, -0.5f,  0.5f), -Stride.Core.Mathematics.Vector3.UnitY, Stride.Core.Mathematics.Vector2.UnitY),
-            new(new Stride.Core.Mathematics.Vector3( 0.5f, -0.5f,  0.5f), Stride.Core.Mathematics.Vector3.UnitX, Stride.Core.Mathematics.Vector2.Zero),
-            new(new Stride.Core.Mathematics.Vector3( 0.5f, -0.5f, -0.5f), Stride.Core.Mathematics.Vector3.UnitX, Stride.Core.Mathematics.Vector2.UnitX),
-            new(new Stride.Core.Mathematics.Vector3( 0.5f,  0.5f, -0.5f), Stride.Core.Mathematics.Vector3.UnitX, Stride.Core.Mathematics.Vector2.One),
-            new(new Stride.Core.Mathematics.Vector3( 0.5f,  0.5f,  0.5f), Stride.Core.Mathematics.Vector3.UnitX, Stride.Core.Mathematics.Vector2.UnitY),
-            new(new Stride.Core.Mathematics.Vector3(-0.5f, -0.5f, -0.5f), -Stride.Core.Mathematics.Vector3.UnitX, Stride.Core.Mathematics.Vector2.Zero),
-            new(new Stride.Core.Mathematics.Vector3(-0.5f, -0.5f,  0.5f), -Stride.Core.Mathematics.Vector3.UnitX, Stride.Core.Mathematics.Vector2.UnitX),
-            new(new Stride.Core.Mathematics.Vector3(-0.5f,  0.5f,  0.5f), -Stride.Core.Mathematics.Vector3.UnitX, Stride.Core.Mathematics.Vector2.One),
-            new(new Stride.Core.Mathematics.Vector3(-0.5f,  0.5f, -0.5f), -Stride.Core.Mathematics.Vector3.UnitX, Stride.Core.Mathematics.Vector2.UnitY),
-        };
-
-        var indices = new ushort[]
-        {
-            0,1,2, 0,2,3, 4,5,6, 4,6,7, 8,9,10, 8,10,11,
-            12,13,14, 12,14,15, 16,17,18, 16,18,19, 20,21,22, 20,22,23,
-        };
-
-        var vbo = Stride.Graphics.Buffer.Vertex.New(graphicsDevice, vertices);
-        var ibo = Stride.Graphics.Buffer.Index.New(graphicsDevice, indices);
-
-        var mesh = new Mesh
-        {
-            Draw = new MeshDraw
-            {
-                StartLocation = 0,
-                PrimitiveType = Stride.Graphics.PrimitiveType.TriangleList,
-                VertexBuffers = new[] { new VertexBufferBinding(vbo, Stride.Graphics.VertexPositionNormalTexture.Layout, vertices.Length) },
-                IndexBuffer = new IndexBufferBinding(ibo, false, indices.Length),
-            }
-        };
-
-        var model = new Model();
-        model.Meshes.Add(mesh);
-        model.Materials.Add(new MaterialInstance(material));
-
-        var entity = new Entity(name) { new ModelComponent(model) };
-        entity.Transform.Position = position;
-        entity.Transform.Scale = scale;
-        return entity;
-    }
-
-    /// <summary>
-    /// Checks whether a specific mod scene is currently loaded.
-    /// </summary>
-    public bool IsSceneLoaded(string modId, string sceneUrl)
-    {
-        var key = $"{modId}:{sceneUrl}";
-        return _loadedScenes.ContainsKey(key);
-    }
-
-    /// <summary>
-    /// Disposes all loaded scenes. Called during engine shutdown.
-    /// </summary>
-    public void Dispose()
-    {
-        foreach (var (key, scene) in _loadedScenes)
-        {
             try
             {
-                scene.Dispose();
+                scene = contentManager.Load<Scene>(sceneUrl);
+                Log.Info($"[ModSceneManager] Loaded scene on-demand: {sceneUrl}");
             }
             catch (Exception ex)
             {
-                Log.Warning($"[ModSceneManager] Error disposing scene '{key}' during shutdown: {ex.Message}");
+                Log.Error($"[ModSceneManager] Failed to load scene {sceneUrl}: {ex.Message}");
+                return;
             }
         }
-        _loadedScenes.Clear();
-        _modScenes.Clear();
+
+        // Replace the scene instance
+        // This happens between frames, so timing issues are avoided
+        try
+        {
+            sceneSystem.SceneInstance = new SceneInstance(_services, scene);
+            _currentSceneUrl = sceneUrl;
+            Log.Info($"[ModSceneManager] Scene switched to: {sceneUrl} ({scene.Entities.Count} entities)");
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"[ModSceneManager] Failed to switch scene: {ex.Message}");
+        }
     }
-}
-
-/// <summary>
-/// Represents a scene entry in the mod scene catalog.
-/// Returned by <see cref="ModSceneManager"/> queries.
-/// </summary>
-public sealed class ModSceneEntry
-{
-    /// <summary>The mod that owns this scene.</summary>
-    public string ModId { get; }
-
-    /// <summary>The scene asset URL within the mod (from mod.json).</summary>
-    public string SceneUrl { get; }
-
-    /// <summary>Human-readable display name for UI menus.</summary>
-    public string DisplayName { get; }
-
-    /// <summary>The declared load behavior for this scene.</summary>
-    public ModSceneLoadBehavior Behavior { get; }
 
     /// <summary>
-    /// True when the engine should present this scene to the player for selection.
+    /// Called during initialization to set the initial scene URL.
     /// </summary>
-    public bool IsPlayerSelectable => Behavior == ModSceneLoadBehavior.MenuSelect;
-
-    public ModSceneEntry(string modId, string sceneUrl, string displayName, ModSceneLoadBehavior behavior)
+    internal void SetInitialScene(string sceneUrl)
     {
-        ModId = modId ?? throw new ArgumentNullException(nameof(modId));
-        SceneUrl = sceneUrl ?? throw new ArgumentNullException(nameof(sceneUrl));
-        DisplayName = displayName ?? throw new ArgumentNullException(nameof(displayName));
-        Behavior = behavior;
+        _currentSceneUrl = sceneUrl;
     }
 }

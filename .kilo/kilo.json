@@ -3,7 +3,13 @@
   "mcp": {
     "modulus": {
       "type": "local",
-      "command": ["dotnet", "run", "--project", "D:/Modulus-Game-Engine/tools/ModulusEngine.MCPServer/ModulusEngine.MCPServer.csproj", "--no-build"],
+      "command": [
+        "dotnet",
+        "run",
+        "--project",
+        "D:/Modulus-Game-Engine/tools/ModulusEngine.MCPServer/ModulusEngine.MCPServer.csproj",
+        "--no-build"
+      ],
       "enabled": true,
       "timeout": 30000
     }
@@ -12,6 +18,9 @@
     "mcp_modulus_*": "allow"
   },
   "indexing": {
-    "enabled": false
+    "enabled": true,
+    "provider": "ollama",
+    "model": "qwen3-embedding:latest",
+    "dimension": 2048
   }
 }

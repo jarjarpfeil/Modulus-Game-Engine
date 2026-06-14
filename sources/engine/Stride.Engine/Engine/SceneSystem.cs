@@ -45,7 +45,43 @@ namespace Stride.Engine
         /// </summary>
         /// <value>The scene</value>
         /// <exception cref="System.ArgumentNullException">Scene cannot be null</exception>
-        public SceneInstance SceneInstance { get; set; }
+        private SceneInstance _sceneInstance;
+        public SceneInstance SceneInstance
+        {
+            get => _sceneInstance;
+            set
+            {
+                if (_sceneInstance == value)
+                    return;
+
+                _sceneInstance = value;
+            }
+        }
+
+        /// <summary>
+        /// Assigns the first camera entity in the scene to the compositor's first camera slot.
+        /// This ensures mod scenes that don't explicitly set camera slots still render correctly.
+        /// </summary>
+        private void AssignCameraToCompositorSlot()
+        {
+            if (_sceneInstance?.RootScene == null || GraphicsCompositor == null)
+                return;
+
+            // Find the first camera entity in the scene
+            foreach (var entity in _sceneInstance.RootScene.Entities)
+            {
+                var cameraComponent = entity.Get<CameraComponent>();
+                if (cameraComponent != null && GraphicsCompositor.Cameras.Count > 0)
+                {
+                    var slot = GraphicsCompositor.Cameras[0];
+                    cameraComponent.Slot = slot.ToSlotId();
+                    Log.Info($"[SceneSystem] Assigned camera entity '{entity.Name}' to compositor slot '{slot.Name}'");
+                    return;
+                }
+            }
+
+            Log.Warning("[SceneSystem] No camera entity found in scene — SceneCameraRenderer will have no camera");
+        }
 
         /// <summary>
         /// URL of the scene loaded at initialization.
@@ -111,25 +147,32 @@ namespace Stride.Engine
                 SplashScreenEnabled = true;
             }
 
-            // Preload the scene if it exists and show splash screen
-            if (InitialSceneUrl != null && content.Exists(InitialSceneUrl))
-            {
-                if (SplashScreenEnabled)
-                    sceneTask = content.LoadAsync<Scene>(InitialSceneUrl);
-                else
-                    SceneInstance = new SceneInstance(Services, content.Load<Scene>(InitialSceneUrl));
-            }
-            else
-            {
-                SceneInstance ??= new SceneInstance(Services) { RootScene = new Scene() };
-            }
-
+            // Load the Graphics Compositor BEFORE the Scene so the scene's VisibilityGroup
+            // binds to the real compositor, not the dummy one from the constructor.
             if (InitialGraphicsCompositorUrl != null && content.Exists(InitialGraphicsCompositorUrl))
             {
                 if (SplashScreenEnabled)
                     compositorTask = content.LoadAsync<GraphicsCompositor>(InitialGraphicsCompositorUrl);
                 else
                     GraphicsCompositor = content.Load<GraphicsCompositor>(InitialGraphicsCompositorUrl);
+            }
+
+            // Load the Scene and assign cameras
+            if (InitialSceneUrl != null && content.Exists(InitialSceneUrl))
+            {
+                if (SplashScreenEnabled)
+                    sceneTask = content.LoadAsync<Scene>(InitialSceneUrl);
+                else
+                {
+                    SceneInstance = new SceneInstance(Services, content.Load<Scene>(InitialSceneUrl));
+
+                    // Assign camera to compositor slot if not already set
+                    AssignCameraToCompositorSlot();
+                }
+            }
+            else
+            {
+                SceneInstance ??= new SceneInstance(Services) { RootScene = new Scene() };
             }
 
             // Create the drawing context

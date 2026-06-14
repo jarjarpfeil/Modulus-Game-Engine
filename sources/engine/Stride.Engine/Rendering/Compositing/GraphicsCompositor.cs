@@ -199,10 +199,8 @@ namespace Stride.Rendering.Compositing
 
                     try
                     {
-                        
                         using (Profiler.Begin(GameCollectKey))
                         {
-                            // Collect in the game graphics compositor: Setup features/stages, enumerate views and populates VisibilityGroup
                             Game.Collect(context.RenderContext);
                         }
 
@@ -232,7 +230,6 @@ namespace Stride.Rendering.Compositing
 
                         using (Profiler.Begin(GameDrawKey))
                         {
-                            // Draw using the game graphics compositor
                             Game.Draw(context);
                         }
 

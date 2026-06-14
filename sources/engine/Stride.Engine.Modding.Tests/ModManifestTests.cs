@@ -45,7 +45,8 @@ public class ModManifestTests
             ],
             "loadOrder": 200,
             "tags": ["gameplay", "health"],
-            "type": "standard"
+            "type": "standard",
+            "requiresNativeCode": true
         }
         """;
 
@@ -73,6 +74,7 @@ public class ModManifestTests
         Assert.Equal(200, manifest.LoadOrder);
         Assert.Contains("gameplay", manifest.Tags);
         Assert.Equal("standard", manifest.Type);
+        Assert.True(manifest.RequiresNativeCode);
 
         // Scene declarations
         Assert.Equal(4, manifest.Scenes.Count);
@@ -114,6 +116,7 @@ public class ModManifestTests
         Assert.Empty(manifest.Assets);
         Assert.Equal(100, manifest.LoadOrder); // default
         Assert.Equal("standard", manifest.Type); // default
+        Assert.False(manifest.RequiresNativeCode); // default
     }
 
     [Fact]
