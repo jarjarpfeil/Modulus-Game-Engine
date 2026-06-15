@@ -77,7 +77,10 @@ Hot path: `sources/engine/Stride.Engine/Modding/`
 |---|---|
 | `ModHost.cs` | Lifecycle manager; auto-created by `Game()` constructor |
 | `ModLoadContext.cs` | Collectible ALC per mod |
-| `ModAutoLoadSystem.cs` | One-shot `GameSystemBase` — `ModHost.LoadAllMods()` on first Update |
+| `ModAutoLoadSystem.cs` | One-shot `GameSystemBase` — loads mods, merges original scene geometry, assigns cameras |
+| `ModSceneManager.cs` | Scene caching, registration, runtime switching (`OriginalSceneUrl` tracking) |
+| `ModSceneSwitchSystem.cs` | Processes pending scene switches at end of frame (UpdateOrder=1000) |
+| `ModSceneEntry.cs` | Scene entry with ModId, SceneUrl, DisplayName, Behavior |
 | `ModLoadOrderResolver.cs` | Topological sort + DFS cycle detection |
 | `ModPackageManager.cs` | `.modpkg` ZIP install/uninstall with metadata tracking |
 | `ModContentManager.cs` | Multi-source content resolution (incl. GUID injection) |
@@ -87,6 +90,27 @@ Hot path: `sources/engine/Stride.Engine/Modding/`
 | `Api/IMod*.cs` | Stable ABI interfaces (`Modulus.Modding.Api`) |
 
 **Phase status:** 0–9 complete. Total: 192 modding tests passing.
+
+### Scene management system
+
+| Component | File | Purpose |
+|---|---|---|
+| `ModAutoLoadSystem` | `Modding/ModAutoLoadSystem.cs` | One-shot system: loads mods on first frame, merges original scene geometry into mod scenes that lack renderable content, assigns camera to compositor slot |
+| `ModSceneManager` | `Modding/ModSceneManager.cs` | Scene caching, registration, runtime switching. Tracks `OriginalSceneUrl` (the game's default scene before mod override) |
+| `ModSceneSwitchSystem` | `Modding/ModSceneSwitchSystem.cs` | Processes pending scene switches at end of frame (UpdateOrder=1000) |
+| `ModSceneEntry` | `Modding/ModSceneEntry.cs` | Scene entry with ModId, SceneUrl, DisplayName, Behavior |
+| `ModSecurityConfig` | `Modding/ModSecurityConfig.cs` | Security settings: `EnableNativeModLoading` gates native mod loading (default false) |
+| `NativeModLoadContext` | `Modding/ModLoadContext.cs` | Non-collectible ALC for native mods — allows unmanaged DLL loading, cannot be unloaded |
+| `ModCoreAssemblies` | `Modding/ModLoadContext.cs` | Single source of truth for core assembly names — used by both ALC types and ModHost |
+
+**How mod scene loading works:**
+1. `Game.LoadModsEarly()` checks if any mod provides a `Replace`-behavior scene
+2. If yes: saves `SceneSystem.InitialSceneUrl` to `ModSceneManager.OriginalSceneUrl`, then overrides `InitialSceneUrl` with the mod scene URL
+3. `SceneSystem.LoadContent()` loads the mod scene (compositor before scene to avoid dummy-compositor binding)
+4. `ModAutoLoadSystem.Update()` runs on first frame: merges original scene entities into the mod scene (mod scenes compiled without GPU resources typically only have Camera+Light)
+5. Camera is assigned to compositor slot; duplicate cameras are removed
+
+**`Material.New()` does NOT work at runtime.** The `EffectSystem` can't compile shaders on the fly — shader source files are stripped from the asset bundle by the dead-code eliminator, and the runtime shader compiler (`dxcompiler.dll` etc.) isn't shipped. Pre-compiled assets from the asset database work fine. Runtime `Material.New()` creates `RenderMesh` objects that silently fail at `MeshRenderFeature.PrepareEffectPermutationsImpl()` — they appear in the VisibilityGroup but are never submitted to the GPU. Fix: mods must ship pre-compiled shader bytecode in `shaders/` bundles (Phase 4.7 — `ModShaderManager`).
 
 ### Mod auto-loading
 
@@ -109,7 +133,13 @@ Every mod `.csproj` MUST have:
 
 ### Mod runtime constraints
 
-- Mods are **managed C# only**. No native DLLs in `.modpkg`.
+- Mods are **managed C# by default**. Native DLLs are blocked in standard `ModLoadContext`.
+  Opt-in: mods with `requiresNativeCode: true` in mod.json can use native code, but:
+  - Require `ModSecurityConfig.EnableNativeModLoading = true` (engine service, default false)
+  - Are loaded into non-collectible `NativeModLoadContext` (bypass ALC isolation)
+  - Cannot be hot-swapped (`IsHotSwappable = false`)
+  - Native DLL file handles remain resident until process exit
+  - `ModHost.OnNativeModLoaded` event fires for UI security warning
 - `Modulus.Modding.Api` is the **only stable ABI**. Other assemblies are internal.
 - `IModEventBus` does NOT expose `SubscriptionCount` — cast to concrete `ModEventBus`.
 - `EntityProcessor<T>` has no `.Entity` — use `ComponentDatas.First().Key.Entity`.
@@ -119,6 +149,7 @@ Every mod `.csproj` MUST have:
   `scene.Add(...)` / `scene.Remove(...)` / `scene.Count` / `scene.FirstOrDefault()`,
   **not** `scene.Entities`.
 - `EffectSystem` is in `Stride.Rendering` (not `Stride.Effects`).
+- **`Material.New()` does NOT work at runtime.** Shader sources are stripped from the asset bundle by the dead-code eliminator, and the runtime shader compiler (`dxcompiler.dll` etc.) isn't shipped. Pre-compiled assets from the asset database work fine. Runtime `Material.New()` creates `RenderMesh` objects that silently fail at `MeshRenderFeature.PrepareEffectPermutationsImpl()` — they appear in the VisibilityGroup but are never submitted to the GPU. Mods must ship pre-compiled shader bytecode in `shaders/` bundles.
 - `ContentManager` is in `Stride.Core.Serialization.Contents`.
 - `GraphicsDevice` is in `Stride.Graphics`.
 - `IContentManager` is in `Stride.Core.Serialization.Contents`.

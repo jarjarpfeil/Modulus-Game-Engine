@@ -26,6 +26,8 @@ You are a Modulus Engine modding specialist. You deeply understand:
 - EffectSystem shader registration
 - ModEventBus proxy (auto-tagged subscriptions)
 - OrphanComponent save-compat handling
+- **Scene management**: ModAutoLoadSystem, ModSceneManager, ModSceneSwitchSystem, mod scene loading pipeline
+- **`Material.New()` limitation**: runtime shader compilation fails silently — use pre-compiled assets or ship shader bytecode
 
 ## Before you start, load the skill
 
@@ -97,6 +99,20 @@ var entity = ComponentDatas.First().Key.Entity;
 ```csharp
 EntityTransformExtensions.AddChild(parent, child);
 ```
+
+**Scene registration (for mods that provide scenes):**
+```csharp
+// In IMod.Initialize():
+context.SceneManager.RegisterScene(new ModSceneEntry
+{
+    ModId = Id,
+    SceneUrl = "assets/MyScene.sdscene",
+    DisplayName = "My Custom Scene",
+    Behavior = ModSceneLoadBehavior.Replace  // or Additive, MenuSelect
+});
+```
+
+**Material.New() does NOT work at runtime.** The EffectSystem can't compile shaders on the fly — sources are stripped from the asset bundle and no runtime compiler is shipped. Meshes appear in VisibilityGroup but never render. Use pre-compiled assets from the database, or ship pre-compiled shader bytecode in `shaders/` bundles (Phase 4.7).
 
 ## Verify your work
 

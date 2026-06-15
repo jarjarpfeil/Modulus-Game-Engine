@@ -31,7 +31,7 @@ mods via AssemblyLoadContext isolation. Two layers of abstraction:
 | **API versioning** | Flexible — mods rarely break; version bumps minimize incompatibility |
 | **Cross-game modding** | Mandatory |
 | **Sandboxing** | Not in v1 |
-| **Native dependencies** | Mods are managed C# only — no native DLLs in mods |
+| **Native dependencies** | Opt-in only — mods declare `requiresNativeCode: true` in mod.json. Loaded into non-collectible `NativeModLoadContext` (bypasses ALC isolation). Requires `ModSecurityConfig.EnableNativeModLoading = true` in engine config. Native mods cannot be hot-swapped and native DLL handles remain resident until process exit. Standard mods still block native DLLs via `ModLoadContext.LoadUnmanagedDll` override. |
 | **Load order** | Deterministic via topological sort + cycle detection |
 | **ABI stability** | `Modulus.Modding.Api` is the stable ABI; all other assemblies are internal |
 | **Editor hot-reload** | Mods load at runtime only; editor reload does NOT trigger mod reload |
@@ -583,6 +583,47 @@ protected override Assembly? Load(AssemblyName assemblyName)
 
 **Test:** Unit test — load mod assembly, verify types accessible, unload, verify types gone.
 
+### 3.1.1 Native Mod Loading (Opt-In)
+
+**Files:**
+- `sources/engine/Stride.Engine/Modding/ModSecurityConfig.cs` — engine security settings
+- `sources/engine/Stride.Engine/Modding/ModLoadContext.cs` — contains both `ModLoadContext` (collectible, blocks native) and `NativeModLoadContext` (non-collectible, allows native)
+- `sources/engine/Stride.Engine/Modding/ModCoreAssemblies.cs` — single source of truth for core assembly names shared by both ALC types
+- `sources/engine/Stride.Engine/Modding/ModHost.cs` — routing logic in `LoadMod()`
+- `sources/engine/Stride.Engine/Modding/ModPackage.cs` — `LoadNativeAssemblies()`, `NativeLoadContext`, `IsHotSwappable`
+
+**Manifest field:** `requiresNativeCode: bool` in `mod.json` (default `false`).
+
+**Engine config:** `ModSecurityConfig.EnableNativeModLoading` (default `false`). Register as a service:
+```csharp
+services.AddService(new ModSecurityConfig { EnableNativeModLoading = true });
+```
+
+**Routing logic in `ModHost.LoadMod()`:**
+1. If `manifest.RequiresNativeCode == false` → standard path: `ModPackage.LoadAssemblies()` into collectible `ModLoadContext`. `LoadUnmanagedDll` throws `NotSupportedException`.
+2. If `manifest.RequiresNativeCode == true`:
+   - Check `ModSecurityConfig.EnableNativeModLoading`. If `false` → abort, set `ModState.Errored`, log error.
+   - If `true` → `ModPackage.LoadNativeAssemblies()` into non-collectible `NativeModLoadContext`. Sets `IsHotSwappable = false`. Raises `OnNativeModLoaded` event for UI warning.
+
+**`NativeModLoadContext`:**
+- `isCollectible: false` — cannot be unloaded. Native DLL file handles remain resident until process exit.
+- `LoadUnmanagedDll` delegates to `base` (allows native loading).
+- `Load(AssemblyName)` routes core API + shared assemblies to default ALC via `ModCoreAssemblies.IsCore()` — **identical resolution to `ModLoadContext`**. This prevents a native mod from loading its own copy of `Stride.Engine` or `Modulus.Modding.Api`, which would cause catastrophic type-identity mismatches.
+
+**`ModCoreAssemblies` (single source of truth):**
+- `internal static class ModCoreAssemblies` with a `HashSet<string>` of exactly 20 core assembly names.
+- Used by `ModLoadContext`, `NativeModLoadContext`, and `ModHost.IsCoreApiAssembly()`. No divergence possible.
+
+**Cross-mod assembly sharing:**
+- All non-core assemblies from both collectible and native ALCs are registered into `ModHost._sharedAssemblies`.
+- This allows collectible mods to resolve types against native mod assemblies via `TryGetLoadedSharedAssembly()`.
+
+**`ModPackage.Unload()` for native mods:**
+- Nulls `NativeLoadContext` reference but cannot call `.Unload()` (non-collectible).
+- Logs a `Warning`-level message documenting that native DLL handles remain loaded until process exit.
+
+**Event:** `ModHost.OnNativeModLoaded` fires after successful native mod load. UI should display: "This mod executes unmanaged native code and cannot be hot-reloaded."
+
 ### 3.2 Mod Type Registration
 
 **Files to create:**
@@ -627,6 +668,28 @@ protected override Assembly? Load(AssemblyName assemblyName)
 
 **Test:** Unit test — load asset from mod, verify resolution. Integration test — load model from mod, add to scene, verify it renders.
 
+### 3.5 Scene Management System
+
+**Files to create:**
+- `sources/engine/Stride.Engine/Modding/ModSceneManager.cs` — scene caching, registration, runtime switching
+- `sources/engine/Stride.Engine/Modding/ModSceneSwitchSystem.cs` — processes pending scene switches at end of frame
+- `sources/engine/Stride.Engine/Modding/ModSceneEntry.cs` — scene entry with ModId, SceneUrl, DisplayName, Behavior
+
+**Files to modify:**
+- `sources/engine/Stride.Engine/Engine/Game.cs` — `LoadModsEarly()` saves `OriginalSceneUrl` before overriding `SceneSystem.InitialSceneUrl`
+- `sources/engine/Stride.Engine/Modding/ModAutoLoadSystem.cs` — merges original scene entities into mod scenes lacking renderable content
+
+**How it works:**
+1. `Game.LoadModsEarly()` checks if any mod provides a `Replace`-behavior scene
+2. If yes: saves `SceneSystem.InitialSceneUrl` to `ModSceneManager.OriginalSceneUrl`, then overrides `InitialSceneUrl` with the mod scene URL
+3. `SceneSystem.LoadContent()` loads the mod scene (compositor before scene to avoid dummy-compositor binding)
+4. `ModAutoLoadSystem.Update()` runs on first frame: merges original scene entities into the mod scene (mod scenes compiled without GPU resources typically only have Camera+Light)
+5. Camera is assigned to compositor slot; duplicate cameras are removed
+
+**`Material.New()` does NOT work at runtime** — see Phase 4.7 for details. Mod scenes that lack renderable content get the original scene's pre-compiled geometry merged in.
+
+**Test:** Integration test — mod with Replace scene loads, original scene geometry renders in mod scene context.
+
 ### Acceptance Criteria
 
 - [ ] Mod assemblies load via AssemblyLoadContext
@@ -635,6 +698,9 @@ protected override Assembly? Load(AssemblyName assemblyName)
 - [ ] Mod assets load and render
 - [ ] All registrations clean up on unload
 - [ ] `IModEventBus` interface defined (used in Phase 4 but required before ModEventBus implementation)
+- [ ] Mod scene replacement works — Replace-behavior mod scenes load and render
+- [ ] Original scene geometry merges into mod scenes lacking renderable content
+- [ ] Camera correctly assigned to compositor slot in mod scenes
 
 ---
 
@@ -946,9 +1012,12 @@ public class OrphanComponent : EntityComponent
 
 ### 4.7 Shader Extraction from Mods
 
-**Problem:** Mods may include custom shaders (SDSL/HLSL) for custom materials or rendering effects. If these shaders aren't extracted and compiled, the mod's materials won't render.
+**Problem:** Mods may include custom shaders (SDSL/HLSL) for custom materials or rendering effects. If these shaders aren't extracted and compiled, the mod's materials won't render. **`Material.New()` does NOT work at runtime** — the `EffectSystem` can't compile shaders on the fly because:
+1. Shader source files (`.sdsl`) are stripped from the asset bundle by the dead-code eliminator (only permutations referenced by pre-compiled assets are kept)
+2. The runtime shader compiler (`dxcompiler.dll`, `d3dcompiler_47.dll`, SPIRV-cross tools) is not shipped in production builds
+3. `MeshRenderFeature.PrepareEffectPermutationsImpl()` silently skips meshes whose effects fail to compile — they appear in the VisibilityGroup but are never submitted to the GPU
 
-**Solution:** The `.modpkg` format includes a `shaders/` directory. On mod load, shaders are compiled via Stride's effect system and registered with the `EffectSystem`.
+**Solution:** The `.modpkg` format includes a `shaders/` directory with pre-compiled shader bytecode. On mod load, shaders are registered with the `EffectSystem` so materials resolve correctly.
 
 **Files to create:**
 - `sources/engine/Stride.Engine/Modding/ModShaderManager.cs`
@@ -1012,6 +1081,7 @@ public class ModShaderManager
 - [ ] Disabled mods can be re-enabled after fixing
 - [ ] Custom shaders from mods compile and render correctly
 - [ ] Missing shaders fall back to default PBR shader
+- [ ] `Material.New()` does NOT silently fail at runtime — documented and guarded against
 - [ ] GUID-aware content pipeline resolves mod assets correctly
 - [ ] GUID collision check rejects conflicting mods
 
@@ -2260,6 +2330,16 @@ The dual-queue design (`_updateQueue` for ECS, `_drawQueue` for GPU) must be imp
 **3. Cross-ALC Type Identity (Phase 3.1) — Hard to debug**
 
 If `ModLoadContext.Load()` doesn't correctly route shared assemblies to their parent ALCs, mods get "type mismatch" errors that are very confusing. The code example in the plan is correct — implement it exactly as shown. Test this with a mod that depends on `Modulus.StandardLibrary` early.
+
+**3.5. Runtime Material.New() Failure (Phase 4.7) — Silent, hard to diagnose**
+
+`Material.New()` with `MaterialDiffuseLambertModelFeature` creates `RenderMesh` objects that appear in the `VisibilityGroup` but are never submitted to the GPU. The failure is silent — no exceptions, no error logs. Four root causes combine:
+1. **Asset stripping** — the dead-code eliminator only keeps shader permutations referenced by pre-compiled assets
+2. **No runtime compiler** — `dxcompiler.dll` etc. are not shipped in production builds
+3. **Silent skip** — `MeshRenderFeature.PrepareEffectPermutationsImpl()` skips meshes whose effects fail `IsReady` check without logging
+4. **ALC reflection** — mod types may not be cross-registered for mixin/macro resolution
+
+**Never use `Material.New()` at runtime for visible geometry.** Use pre-compiled assets from the asset database, or ship pre-compiled shader bytecode in `shaders/` bundles. The `ModAutoLoadSystem` works around this by merging the original scene's pre-compiled geometry into mod scenes that lack renderable content.
 
 ### Medium-Risk Areas
 

@@ -66,5 +66,18 @@ Mod auto-loading (2026-06-07): Game.Initialize() now adds ModAutoLoadSystem — 
 Modulus.Engine NuGet package rename (2026-06-07): Added <PackageId>Modulus.Engine</PackageId> to Stride.Engine.csproj. PackageId only (not AssemblyName) — InternalsVisibleTo("Stride.Engine") in other Stride assemblies would break with AssemblyName rename. NuGet package is Modulus.Engine.nupkg but DLL stays Stride.Engine.dll. TestGame references "Modulus.Engine" PackageReference. nuget.config in TestGame points to D:\Modulus-Game-Engine\bin\packages as local source. All 192 modding tests pass.
 §
 SpaceEscape mods wired into TestGame (2026-06-07): 6 mods load in D:\TestGame\MyGame\Bin\Windows\Debug\mods\. Dependency graph: assets(1)→rendering(5)→character(10)→background(20)→ui(30), chaos(999). mod.json files updated with scenes[] and dependencies. All mod.json files need manual copy from source to test output (build doesn't copy them). TestGame uses Modulus.Engine NuGet package from local source (nuget.config points to D:\Modulus-Game-Engine\bin\packages). MD5 verification confirms correct DLL resolution.
+
+Mod scene management system (2026-06-14): Built scene replacement pipeline for mods. Key components: ModAutoLoadSystem (merges original scene geometry into mod scenes lacking renderable content), ModSceneManager (OriginalSceneUrl tracking), ModSceneSwitchSystem (end-of-frame scene switches), ModSceneEntry (scene metadata). Compositor loads before scene in SceneSystem.LoadContent() to avoid dummy-compositor binding. Runtime Material.New() silently fails — EffectSystem can't compile shaders on the fly (sources stripped by dead-code eliminator, no dxcompiler.dll shipped). Pre-compiled assets from the asset database work fine. Fix: mods must ship pre-compiled shader bytecode in shaders/ bundles (Phase 4.7).
 §
 Phase 9 (Documentation & Distribution) complete: DocFX setup (docfx.json, index.md, toc.yml), 8 articles (~170KB total: writing-a-mod, mod-api-reference, cross-game-mods, architecture, mcp-setup, mcp-tool-reference, stride-modifications, fork-management), 3 CI/CD workflows (ci.yml, release.yml, docs.yml), 2 dotnet new templates (modulus-game, modulus-mod), ModulusEngine.Templates.csproj. Stride.Modding.Editor added to Stride.sln. 192 total modding tests pass. Deferred items: Standard Library mod, Translation Mods, Mod Configuration System.
+
+Native mod loading architecture (2026-06-14):
+- Opt-in tier: mods declare `requiresNativeCode: true` in mod.json
+- `ModSecurityConfig.EnableNativeModLoading` gates whether native mods are allowed (default: false)
+- Native mods load into `NativeModLoadContext` (non-collectible ALC, allows unmanaged DLLs)
+- Standard mods load into `ModLoadContext` (collectible ALC, blocks unmanaged DLLs via LoadUnmanagedDll override)
+- `ModCoreAssemblies` is the single source of truth for core assembly names — used by both ALC types and ModHost
+- All non-core assemblies from both ALC types register into `_sharedAssemblies` for cross-mod type resolution
+- `ModHost.OnNativeModLoaded` event fires for UI security warning
+- `ModPackage.IsHotSwappable = false` for native mods; Unload() logs warning about permanent native DLL residency
+- Key files: ModSecurityConfig.cs, ModCoreAssemblies.cs (in ModLoadContext.cs), NativeModLoadContext (in ModLoadContext.cs), ModHost.cs (routing + shared registration), ModPackage.cs (LoadNativeAssemblies + IsHotSwappable + Unload warning)

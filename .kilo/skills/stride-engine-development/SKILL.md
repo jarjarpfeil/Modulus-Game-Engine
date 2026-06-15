@@ -31,6 +31,7 @@ of working in this repo. **Read this BEFORE touching ECS, ALC, or mod code.**
 | `DefaultEntityComponentProcessorAttribute.ProcessorType` | **field is `.TypeName` (string)** |
 | `DataContractAttribute.Name` | **field is `.Alias`** |
 | `IModEventBus.SubscriptionCount` | **does not exist** — cast to `ModEventBus` |
+| `Material.New()` at runtime | **silently fails** — EffectSystem can't compile shaders on the fly. Meshes appear in VisibilityGroup but never render. Use pre-compiled assets from the database. |
 
 ## 3. ECS / Entity Pitfalls
 
@@ -124,7 +125,25 @@ Every mod `.csproj` MUST have these four things or it WILL fail at runtime:
 If a mod's components can't be cast to `EntityComponent` after load, it's
 invariably a missing `RemoveStrideDlls` target.
 
-## 6. Game() / ModHost Integration
+## 6. Scene Management System
+
+| Component | File | Purpose |
+|---|---|---|
+| `ModAutoLoadSystem` | `Modding/ModAutoLoadSystem.cs` | One-shot: loads mods, merges original scene geometry into mod scenes lacking renderable content, assigns camera to compositor slot |
+| `ModSceneManager` | `Modding/ModSceneManager.cs` | Scene caching, registration, runtime switching. Tracks `OriginalSceneUrl` (game's default scene before mod override) |
+| `ModSceneSwitchSystem` | `Modding/ModSceneSwitchSystem.cs` | Processes pending scene switches at end of frame (UpdateOrder=1000) |
+| `ModSceneEntry` | `Modding/ModSceneEntry.cs` | Scene entry with ModId, SceneUrl, DisplayName, Behavior |
+
+**How mod scene loading works:**
+1. `Game.LoadModsEarly()` checks if any mod provides a `Replace`-behavior scene
+2. If yes: saves `SceneSystem.InitialSceneUrl` to `ModSceneManager.OriginalSceneUrl`, then overrides `InitialSceneUrl` with the mod scene URL
+3. `SceneSystem.LoadContent()` loads the mod scene (compositor before scene to avoid dummy-compositor binding)
+4. `ModAutoLoadSystem.Update()` runs on first frame: merges original scene entities into the mod scene (mod scenes compiled without GPU resources typically only have Camera+Light)
+5. Camera is assigned to compositor slot; duplicate cameras are removed
+
+**`Material.New()` does NOT work at runtime.** The `EffectSystem` can't compile shaders on the fly — shader source files are stripped from the asset bundle by the dead-code eliminator, and the runtime shader compiler (`dxcompiler.dll` etc.) isn't shipped. Pre-compiled assets from the asset database work fine. Runtime `Material.New()` creates `RenderMesh` objects that silently fail at `MeshRenderFeature.PrepareEffectPermutationsImpl()` — they appear in the VisibilityGroup but are never submitted to the GPU. Fix: mods must ship pre-compiled shader bytecode in `shaders/` bundles (Phase 4.7 — `ModShaderManager`).
+
+## 7. Game() / ModHost Integration
 
 - `Game()` constructor (line ~246 of `Game.cs`) **already creates and registers
   `ModHost`** as a service. Do NOT pre-register in host apps — it throws
@@ -132,12 +151,13 @@ invariably a missing `RemoveStrideDlls` target.
 - `Game.Initialize()` checks for existing `ModHost` and uses it; only creates a
   new one if absent.
 - `Game.Initialize()` adds `ModAutoLoadSystem` — a one-shot `GameSystemBase` that
-  calls `ModHost.LoadAllMods()` on first Update. Zero host code needed.
+  calls `ModHost.LoadAllMods()` on first Update, then merges original scene geometry
+  into mod scenes lacking renderable content and assigns cameras. Zero host code needed.
 - To get ModHost from a host app: `game.Services.GetService<ModHost>()`.
 - Don't subscribe to `Game.GameStarted` to do scene creation — use a `SyncScript`
   instead, since `GameStarted` fires before the scene is fully loaded.
 
-## 7. Content & GUID Pipeline
+## 8. Content & GUID Pipeline
 
 - Each `.modpkg` includes an `asset-guids.json` mapping virtual asset paths to
   compiled GUIDs:
@@ -154,7 +174,7 @@ invariably a missing `RemoveStrideDlls` target.
 - Loose `.sd*` files can't be loaded by `ObjectDatabase` without indexing —
   mods need pre-compiled `asset.db` files.
 
-## 8. HTTP API (engine's localhost:9876 server)
+## 9. HTTP API (engine's localhost:9876 server)
 
 - All requests (GET and POST) **must** marshal work to the game thread.
   Stride's ECS and Scene Graph are not thread-safe.
@@ -167,14 +187,14 @@ invariably a missing `RemoveStrideDlls` target.
   list, signal a fence, resume on a background thread. **Don't** read the
   backbuffer synchronously — it stalls the GPU.
 
-## 9. ModEventBus Proxy
+## 10. ModEventBus Proxy
 
 `ModEventBusProxy` auto-tags every subscription with the subscribing mod's ID,
 so that when a mod is unloaded, all of its subscriptions can be cleaned up at
 once by ID. **Always use the proxy from mods** — never reach for the concrete
 `ModEventBus` directly (you'll skip the tagging and leak handlers).
 
-## 10. Pragmatic Renaming Rule
+## 11. Pragmatic Renaming Rule
 
 "Any system that we have actively changed needs to be rebranded, if it's still
 the same package we leave it alone." So:
@@ -183,7 +203,7 @@ the same package we leave it alone." So:
 - New modding APIs are in `Modulus.Modding.Api` namespace ✅
 - Stride's `Entity`, `EntityManager`, `SceneInstance` etc. keep their names ✅
 
-## 11. Testing
+## 12. Testing
 
 - xUnit `[Fact]`s for unit tests.
 - ALC `WeakReference` tests are unreliable in xUnit parallel runs. Use the
@@ -193,7 +213,7 @@ the same package we leave it alone." So:
 - For graphics-dependent code, use `Stride.Tests.Simple.slnf` filters; full
   Stride.Tests.sln requires a working GPU.
 
-## 12. Memory Shortcuts
+## 13. Memory Shortcuts
 
 - Look for: `MEMORY.md` (chronological session notes) and `USER.md` (user
   preferences, pain points, hardware specs).
@@ -202,7 +222,7 @@ the same package we leave it alone." So:
 - The 10-iteration blind-recompile loop is an anti-pattern. Tune live via
   `/api/v1/...` HTTP endpoints or settings dialog, then bake constants.
 
-## 13. Discovered Anti-Patterns
+## 14. Discovered Anti-Patterns
 
 | Anti-pattern | Why it's bad |
 |---|---|
@@ -214,3 +234,4 @@ the same package we leave it alone." So:
 | Skipping `RemoveStrideDlls` target | Mod components won't cast to engine's `EntityComponent`. |
 | Skipping `PrivateAssets="all"` | Transitive `Stride.*.dll` pollutes mod bin → same type-identity failure. |
 | Returning the shared assembly from ModLoadContext | Creates a second copy → type identity breaks. |
+| Using `Material.New()` at runtime for visible geometry | Silently fails — EffectSystem can't compile shaders on the fly. Meshes appear in VisibilityGroup but never render. Use pre-compiled assets or ship shader bytecode in `shaders/` bundles. |

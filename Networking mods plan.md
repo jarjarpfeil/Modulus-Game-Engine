@@ -43,6 +43,8 @@ Step 4: The Handshake Evaluator Pipeline
 
         Native Check: If the client manifest contains any mod with RequiresNativeCode == true, and server AllowNativeMods == false, KICK.
 
+        Note: On the engine side, RequiresNativeCode maps to ModSecurityConfig.EnableNativeModLoading. The server's mod-policy.toml AllowNativeMods corresponds to this setting. Native mods bypass ALC isolation (loaded into non-collectible NativeModLoadContext), cannot be hot-swapped, and their native DLL handles remain resident until process exit.
+
         Blacklist Check: If any client mod ID or Hash exists in BlacklistedMods, KICK ("Unauthorized modification detected").
 
         Integrity Check: Loop through server RequiredMods. If the client is missing the ID, fails the SemVer rule, or fails the Hash check (if MatchHash = true), KICK ("Missing/Mismatched required mod").

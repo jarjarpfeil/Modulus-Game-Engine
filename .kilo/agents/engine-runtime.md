@@ -36,7 +36,7 @@ GET  /api/v1/scene/entities         — list entities in current scene
 GET  /api/v1/scene/entities/{id}    — entity details
 POST /api/v1/scene/entities         — create entity
 DELETE /api/v1/scene/entities/{id}  — delete entity
-GET  /api/v1/scene/scenes           — list scenes
+GET  /api/v1/scene/scenes           — list scenes (includes mod scenes, OriginalSceneUrl)
 GET  /api/v1/debug/logs             — recent log entries
 GET  /api/v1/debug/console          — console output
 GET  /api/v1/mod/list               — installed mods
