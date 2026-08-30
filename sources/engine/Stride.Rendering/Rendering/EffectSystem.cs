@@ -27,6 +27,9 @@ namespace Stride.Rendering
         private EffectCompilerBase compiler;
         private readonly Dictionary<string, List<CompilerResults>> earlyCompilerCache = new Dictionary<string, List<CompilerResults>>();
         private Dictionary<EffectBytecode, Effect> cachedEffects = new Dictionary<EffectBytecode, Effect>();
+        // Precompiled bytecodes registered by name (e.g., from mod .sdbundle files).
+        // Looked up in LoadEffect to short-circuit compilation.
+        private readonly Dictionary<string, EffectBytecode> precompiledBytecodesByName = new(StringComparer.Ordinal);
 #if STRIDE_PLATFORM_DESKTOP
         private DirectoryWatcher directoryWatcher;
 #endif
@@ -147,6 +150,28 @@ namespace Stride.Rendering
             compilerParameters.EffectParameters.OptimizationLevel = effectCompilerParameters.OptimizationLevel;
             compilerParameters.EffectParameters.Debug = effectCompilerParameters.Debug;
 
+            // Check for precompiled bytecode registered by name (e.g., from a mod's .sdbundle files).
+            // This short-circuits compilation entirely for effects whose precompiled bytecode is known.
+            // Mods that ship .sdbundle files register them via RegisterPrecompiledBytecode; this
+            // avoids needing to write bytecode into the ObjectDatabase with a compiledUrl mapping
+            // (which would require knowing the effectInputHash that depends on shader source + compile parameters).
+            if (precompiledBytecodesByName.Count > 0)
+            {
+                lock (precompiledBytecodesByName)
+                {
+                    if (precompiledBytecodesByName.TryGetValue(effectName, out var precompiledBytecode))
+                    {
+                        var precompiledResult = new EffectBytecodeCompilerResult(precompiledBytecode, new LoggerResult());
+                        var precompiledCompilerResult = new CompilerResults
+                        {
+                            Bytecode = precompiledResult,
+                            SourceParameters = compilerParameters,
+                        };
+                        return CreateEffect(effectName, precompiledResult, precompiledCompilerResult);
+                    }
+                }
+            }
+
             // Get the compiled result
             var compilerResult = GetCompilerResults(effectName, compilerParameters);
             CheckResult(compilerResult);
@@ -176,6 +201,97 @@ namespace Stride.Rendering
             if (compilerResult.HasErrors)
             {
                 throw new InvalidOperationException("Could not compile shader. See error messages: " + compilerResult.ToText());
+            }
+        }
+
+        /// <summary>
+        /// Registers a precompiled effect bytecode so that <see cref="LoadEffect"/> returns it
+        /// directly without invoking the shader compiler. Used for mods that ship standalone
+        /// .sdbundle files — the bytecode is deserialized at runtime and registered by effect name.
+        /// </summary>
+        /// <param name="effectName">The effect name (e.g., "CustomPBR") referenced by materials.</param>
+        /// <param name="bytecode">The precompiled bytecode to register.</param>
+        /// <remarks>
+        /// This bypasses the normal compilation/cache-lookup path entirely. The bytecode must
+        /// match the current <see cref="GraphicsDevice.Platform"/> (e.g., Vulkan bytecode
+        /// for a Vulkan device) — no runtime validation is performed.
+        /// </remarks>
+        public void RegisterPrecompiledBytecode(string effectName, EffectBytecode bytecode)
+        {
+            ArgumentNullException.ThrowIfNull(effectName);
+            ArgumentNullException.ThrowIfNull(bytecode);
+
+            lock (precompiledBytecodesByName)
+            {
+                precompiledBytecodesByName[effectName] = bytecode;
+            }
+
+            // Platform mismatch check: inspect the first stage's bytecode data.
+            // SPIR-V starts with magic 0x07230203; DXBC starts with ASCII "DXBC".
+            // A mismatch is a CRITICAL runtime issue — the GPU pipeline will fail to create
+            // because the bytecode is for a different graphics API. This only applies to
+            // standalone .sdbundle files; bundled bytecode (via assets/{platform}/bundles/)
+            // is already platform-correct since ModContentManager selects the right platform.
+            var currentPlatform = GraphicsDevice.Platform;
+            if (currentPlatform != GraphicsPlatform.Null && bytecode.Stages is { Length: > 0 } stages)
+            {
+                var data = stages[0].Data;
+                if (data is { Length: >= 4 })
+                {
+                    var bytecodePlatform = DetectBytecodePlatform(data);
+                    if (bytecodePlatform != null && bytecodePlatform != currentPlatform)
+                    {
+                        Log.Warning($"Registered precompiled bytecode for effect '{effectName}' — PLATFORM MISMATCH: " +
+                                    $"bytecode is for {bytecodePlatform} but GraphicsDevice is {currentPlatform}. " +
+                                    $"This will likely cause GPU pipeline creation failures. " +
+                                    $"Mod authors should ship platform-correct bytecode or use the standard bundle path.");
+                    }
+                    else
+                    {
+                        Log.Info($"Registered precompiled bytecode for effect '{effectName}' (platform: {currentPlatform}, stages: {bytecode.Stages?.Length ?? 0})");
+                    }
+                }
+                else
+                {
+                    Log.Info($"Registered precompiled bytecode for effect '{effectName}' (stages: {bytecode.Stages?.Length ?? 0})");
+                }
+            }
+            else
+            {
+                Log.Info($"Registered precompiled bytecode for effect '{effectName}' (stages: {bytecode.Stages?.Length ?? 0})");
+            }
+        }
+
+        /// <summary>
+        /// Detects the platform a shader bytecode was compiled for by inspecting its magic header.
+        /// SPIR-V magic: 0x07230203; DXBC magic: ASCII "DXBC".
+        /// Returns null if the format is unrecognized.
+        /// </summary>
+        private static GraphicsPlatform? DetectBytecodePlatform(byte[] data)
+        {
+            // SPIR-V magic header (little-endian)
+            if (data.Length >= 4 && data[0] == 0x03 && data[1] == 0x02 && data[2] == 0x23 && data[3] == 0x07)
+                return GraphicsPlatform.Vulkan;
+
+            // DXBC header for Direct3D 11/12
+            if (data.Length >= 4 && data[0] == 0x44 && data[1] == 0x58 && data[2] == 0x42 && data[3] == 0x43) // "DXBC"
+                return GraphicsPlatform.Direct3D11; // Can't distinguish DX11 from DX12 from bytecode alone
+
+            return null;
+        }
+
+        /// <summary>
+        /// Unregisters a previously-registered precompiled bytecode. Used when a mod
+        /// is unloaded to remove its shader registrations.
+        /// </summary>
+        /// <param name="effectName">The effect name to unregister.</param>
+        public void UnregisterPrecompiledBytecode(string effectName)
+        {
+            ArgumentNullException.ThrowIfNull(effectName);
+            lock (precompiledBytecodesByName)
+            {
+                if (precompiledBytecodesByName.Remove(effectName))
+                    Log.Info($"Unregistered precompiled bytecode for effect '{effectName}'");
             }
         }
 

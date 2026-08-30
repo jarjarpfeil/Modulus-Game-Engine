@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>TestMod</AssemblyName>
+    <ModId>com.example.testmod</ModId>
+    <ModType>standard</ModType>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <!-- NOTE: RootNamespace does NOT affect asset URLs.
+         URL virtualization is achieved by placing assets under Assets/{ModId}/ subdirectories. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Modulus.Mod.Sdk: MSBuild targets + mod verification + packaging. -->
+    <PackageReference Include="Modulus.Mod.Sdk" Version="*" PrivateAssets="all" />
+
+    <!-- Modulus.Engine: engine API for components, scene access.
+         PrivateAssets="all" prevents transitive Stride.*.dll from polluting the mod output. -->
+    <PackageReference Include="Modulus.Engine" Version="*" PrivateAssets="all" />
+
+    <!-- Modulus.Modding.Api: the ONLY stable ABI mods should reference at runtime. -->
+    <PackageReference Include="Modulus.Modding.Api" Version="*" />
+
+    <!-- Stride.Core.Assets.CompilerApp: build-time asset compiler.
+         GeneratePathProperty="true" lets the SDK locate the compiler DLL.
+         PrivateAssets="all" keeps it out of the packaged mod output. -->
+    <PackageReference Include="Stride.Core.Assets.CompilerApp" Version="*" PrivateAssets="all" GeneratePathProperty="true" />
+  </ItemGroup>
+
+  <!-- Optional: reference the game project for custom asset type resolution.
+       The SDK's EnforceModProjectReferenceIsolation target (Private=false) prevents
+       the game assembly from being copied into the mod's output directory. -->
+  <!-- <ProjectReference Include="..\MyGame\MyGame.csproj" /> -->
+
+</Project>

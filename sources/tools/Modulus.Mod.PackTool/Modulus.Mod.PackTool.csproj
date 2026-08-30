@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Modulus.Mod.PackTool</RootNamespace>
+    <AssemblyName>Modulus.Mod.PackTool</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <!-- Pure .NET — no Stride dependencies needed.
+         The index file is plain text (URL + 32-char hex hash per line).
+         mod.json is parsed with System.Text.Json (built-in).
+         ZIP creation uses System.IO.Compression (built-in). -->
+  </PropertyGroup>
+
+</Project>

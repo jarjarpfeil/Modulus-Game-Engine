@@ -1,0 +1,25 @@
+<!--
+  Modulus.Mod.Sdk.props — auto-imported default properties for mod projects.
+  This file is imported by NuGet's auto-import mechanism before the targets file.
+-->
+<Project>
+  <PropertyGroup>
+    <!-- Mod type: standard (code + assets), data (assets only), or patch (patches another mod) -->
+    <ModType Condition="'$(ModType)' == ''">standard</ModType>
+
+    <!-- Manifest file path (relative to project root) -->
+    <ModManifest Condition="'$(ModManifest)' == ''">mod.json</ModManifest>
+
+    <!-- Intermediate staging directory for .modpkg assembly -->
+    <ModPkgStaging Condition="'$(ModPkgStaging)' == ''">$(IntermediateOutputPath)ModPkg\</ModPkgStaging>
+
+    <!--
+      TRAP 4 FOLLOW-UP: Import the centralized version file so $(ModulusEngineVersion)
+      is bound before the targets file evaluates. Without this, the PackageReference
+      to Stride.Core.Assets.CompilerApp would have an unbound Version and NuGet restore fails.
+    -->
+  </PropertyGroup>
+
+  <!-- Import the centralized version file -->
+  <Import Project="$(MSBuildThisFileDirectory)Version.props" Condition="Exists('$(MSBuildThisFileDirectory)Version.props')" />
+</Project>

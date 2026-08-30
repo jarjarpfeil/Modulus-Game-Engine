@@ -1,0 +1,71 @@
+[ModContentManager]: Info: [ModContentManager] Wired composite provider on ContentManager
+[ModContentManager]: Info: [ModContentManager] Subscribed to GraphicsDevice.DeviceCreated for platform refresh
+[ModContentManager]: Info: [ModContentManager] Registered game content provider
+[ModDiscovery]: Info: [ModDiscovery] Found mod directory: com.spaceescape.assets v1.0.0 (D:\TestGame\MyGame2\Bin\Windows\Debug\mods\mod-assets)
+[ModDiscovery]: Info: [ModDiscovery] Found mod directory: com.spaceescape.background v1.0.0 (D:\TestGame\MyGame2\Bin\Windows\Debug\mods\mod-background)
+[ModDiscovery]: Info: [ModDiscovery] Found mod directory: com.spaceescape.chaos v1.0.0 (D:\TestGame\MyGame2\Bin\Windows\Debug\mods\mod-chaos)
+[ModDiscovery]: Info: [ModDiscovery] Found mod directory: com.spaceescape.character v1.0.0 (D:\TestGame\MyGame2\Bin\Windows\Debug\mods\mod-character)
+[ModDiscovery]: Info: [ModDiscovery] Found mod directory: com.spaceescape.rendering v1.0.0 (D:\TestGame\MyGame2\Bin\Windows\Debug\mods\mod-rendering)
+[ModDiscovery]: Info: [ModDiscovery] Found mod directory: com.spaceescape.ui v1.0.0 (D:\TestGame\MyGame2\Bin\Windows\Debug\mods\mod-ui)
+[ModLoadOrderResolver]: Info: [ModLoadOrderResolver] Resolved load order: 6 mods ready, 0 errors, 0 warnings
+[ModTypeRegistry]: Info: [ModTypeRegistry] Registered mod assembly: ModAssets
+[ModSystemRegistry]: Warning: [ModSystemRegistry] No active scene — cannot register systems for mod 'com.spaceescape.assets'
+[ModContentManager]: Info: [ModContentManager] Merged 6 index entries from mod 'com.spaceescape.assets' into game index
+[ModContentManager]: Info: [ModContentManager] Registered mod content: com.spaceescape.assets (platform assets, 6 index entries, path: D:\TestGame\MyGame2\Bin\Windows\Debug\mods\mod-assets\assets)
+[ModShaderManager]: Info: [ModShaderManager] EffectSystem connected
+[ModSceneManager]: Info: [ModSceneManager] Registered scene: SpaceEscape Main Scene (assets/Scene.sdscene) from com.spaceescape.assets
+[ModHost]: Info: [ModHost] Loaded mod: com.spaceescape.assets v1.0.0
+[ModTypeRegistry]: Info: [ModTypeRegistry] Registered mod assembly: ModRendering
+[ModSystemRegistry]: Warning: [ModSystemRegistry] No active scene — cannot register systems for mod 'com.spaceescape.rendering'
+[ModContentManager]: Info: [ModContentManager] Mod 'com.spaceescape.rendering' has no assets — skipping content registration
+[ModShaderManager]: Info: [ModShaderManager] Registered shader 'CustomFogEffect' from mod 'com.spaceescape.rendering' (path: shaders/CustomFogEffect.sdsl)
+[ModShaderManager]: Info: [ModShaderManager] Registered shader 'TransformationBendWorld' from mod 'com.spaceescape.rendering' (path: shaders/TransformationBendWorld.sdsl)
+[ModShaderManager]: Info: [ModShaderManager] Registered shader 'TransformationTextureUV' from mod 'com.spaceescape.rendering' (path: shaders/TransformationTextureUV.sdsl)
+[ModShaderManager]: Info: [ModShaderManager] Registered shader 'SpaceEscapeEffectMain' from mod 'com.spaceescape.rendering' (path: shaders/SpaceEscapeEffectMain.sdfx)
+[ModShaderManager]: Info: [ModShaderManager] Shader 'CustomFogEffect' in mod 'com.spaceescape.rendering' is a source file (.sdsl), not pre-compiled bytecode — skipping bytecode registration. Compile it to a .sdbundle to enable runtime pre-compiled registration.
+[ModShaderManager]: Info: [ModShaderManager] Shader 'TransformationBendWorld' in mod 'com.spaceescape.rendering' is a source file (.sdsl), not pre-compiled bytecode — skipping bytecode registration. Compile it to a .sdbundle to enable runtime pre-compiled registration.
+[ModShaderManager]: Info: [ModShaderManager] Shader 'TransformationTextureUV' in mod 'com.spaceescape.rendering' is a source file (.sdsl), not pre-compiled bytecode — skipping bytecode registration. Compile it to a .sdbundle to enable runtime pre-compiled registration.
+[ModShaderManager]: Info: [ModShaderManager] Shader 'SpaceEscapeEffectMain' in mod 'com.spaceescape.rendering' is a source file (.sdfx), not pre-compiled bytecode — skipping bytecode registration. Compile it to a .sdbundle to enable runtime pre-compiled registration.
+[ModShaderManager]: Info: [ModShaderManager] Found shader source: CustomFogEffect.sdsl (mod: com.spaceescape.rendering) — available for runtime compilation if bytecode is missing
+[ModShaderManager]: Info: [ModShaderManager] Found shader source: TransformationBendWorld.sdsl (mod: com.spaceescape.rendering) — available for runtime compilation if bytecode is missing
+[ModShaderManager]: Info: [ModShaderManager] Found shader source: TransformationTextureUV.sdsl (mod: com.spaceescape.rendering) — available for runtime compilation if bytecode is missing
+[Mod.com.spaceescape.rendering]: Info: [RenderingMod] Initialized
+[Mod.com.spaceescape.rendering]: Info: [RenderingMod] Enabled
+[ModHost]: Info: [ModHost] Loaded mod: com.spaceescape.rendering v1.0.0
+[ModTypeRegistry]: Info: [ModTypeRegistry] Registered mod assembly: ModCharacter
+[ModSystemRegistry]: Warning: [ModSystemRegistry] No active scene — cannot register systems for mod 'com.spaceescape.character'
+[ModContentManager]: Info: [ModContentManager] Mod 'com.spaceescape.character' has no assets — skipping content registration
+[Mod.com.spaceescape.character]: Warning: [CharacterMod] Could not register event bus as service: Service is already registered with this type (Parameter 'type')
+[Mod.com.spaceescape.character]: Info: [CharacterMod] Initialized — listening for game events
+[Mod.com.spaceescape.character]: Info: [CharacterMod] Enabled
+[ModHost]: Info: [ModHost] Loaded mod: com.spaceescape.character v1.0.0
+[ModTypeRegistry]: Info: [ModTypeRegistry] Registered mod assembly: ModBackground
+[ModSystemRegistry]: Warning: [ModSystemRegistry] No active scene — cannot register systems for mod 'com.spaceescape.background'
+[ModContentManager]: Info: [ModContentManager] Mod 'com.spaceescape.background' has no assets — skipping content registration
+[Mod.com.spaceescape.background]: Warning: [BackgroundMod] Could not register event bus: Service is already registered with this type (Parameter 'type')
+[Mod.com.spaceescape.background]: Info: [BackgroundMod] Initialized
+[Mod.com.spaceescape.background]: Info: [BackgroundMod] Enabled
+[ModHost]: Info: [ModHost] Loaded mod: com.spaceescape.background v1.0.0
+[ModTypeRegistry]: Info: [ModTypeRegistry] Registered mod assembly: ModUI
+[ModSystemRegistry]: Warning: [ModSystemRegistry] No active scene — cannot register systems for mod 'com.spaceescape.ui'
+[ModContentManager]: Info: [ModContentManager] Mod 'com.spaceescape.ui' has no assets — skipping content registration
+[Mod.com.spaceescape.ui]: Warning: [UIMod] Could not register event bus: Service is already registered with this type (Parameter 'type')
+[Mod.com.spaceescape.ui]: Info: [UIMod] Initialized
+[Mod.com.spaceescape.ui]: Info: [UIMod] Enabled
+[ModHost]: Info: [ModHost] Loaded mod: com.spaceescape.ui v1.0.0
+[ModTypeRegistry]: Info: [ModTypeRegistry] Registered mod assembly: ModChaos
+[ModSystemRegistry]: Warning: [ModSystemRegistry] No active scene — cannot register systems for mod 'com.spaceescape.chaos'
+[ModContentManager]: Info: [ModContentManager] Mod 'com.spaceescape.chaos' has no assets — skipping content registration
+[Mod.com.spaceescape.chaos]: Warning: [ChaosMod] Could not register event bus: Service is already registered with this type (Parameter 'type')
+[Mod.com.spaceescape.chaos]: Info: [ChaosMod] Initialize complete
+[ModExceptionHandler]: Error: [ModExceptionHandler] Mod 'com.spaceescape.chaos' failed during initialization: [ChaosMod] Intentional initialization failure!
+[ModHost]: Error: [ModHost] Mod 'com.spaceescape.chaos' initialization failed: [ChaosMod] Intentional initialization failure!
+[ModHost]: Info: [ModHost] Loaded mod: com.spaceescape.chaos v1.0.0
+[ModHost]: Info: [ModHost] Loaded 6/6 mods (0 errors)
+[Game]: Info: [Game] Loaded 6 mod(s) during initialization
+[Game]: Info: [Game] Mod scene 'SpaceEscape Main Scene' will replace default scene
+[ModHost]: Info: [ModHost] State persistence enabled: C:\Users\jarja\AppData\Roaming\ModulusEngine
+[ContentManager]: Error: The asset 'assets/Scene.sdscene' could not be found. Asset path should be 'MyFolder/MyAssetName'. Check that the path is correct and that the asset has been included into the build.
+[ModAutoLoad]: Info: [ModAutoLoad] 1 player-selectable scene(s):
+[ModAutoLoad]: Info:   [com.spaceescape.assets] SpaceEscape Main Scene
+[SceneCameraRenderer]: Warning: SceneCameraRenderer [22d3a944-e68a-4080-adac-d0727f855b79] has no camera assigned to its Slot[Main]. Make sure a camera is enabled and assigned to the corresponding Slot.

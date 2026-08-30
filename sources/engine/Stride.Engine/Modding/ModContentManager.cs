@@ -11,6 +11,8 @@ using Stride.Core.Diagnostics;
 using Stride.Core.IO;
 using Stride.Core.Serialization.Contents;
 using Stride.Core.Storage;
+using Stride.Games;
+using Stride.Graphics;
 
 namespace Stride.Engine.Modding;
 
@@ -30,6 +32,12 @@ public class ModContentManager
     private readonly IServiceRegistry _services;
     private readonly CompositeFileProviderService _compositeService;
     private readonly Dictionary<string, DatabaseFileProvider> _modProviders = [];
+
+    // Mods whose platform-specific assets were registered with a fallback directory
+    // because GraphicsDevice was not yet initialized. Refreshed on DeviceCreated.
+    private readonly Dictionary<string, ModPackage> _deferredPlatformPackages = new(StringComparer.OrdinalIgnoreCase);
+
+    private bool _deviceCreatedSubscribed;
 
     // GUID mapping: modId -> list of (virtualPath, guid) entries
     private readonly Dictionary<string, List<GuidMapping>> _modGuidMappings = new(StringComparer.OrdinalIgnoreCase);
@@ -51,12 +59,25 @@ public class ModContentManager
     {
         _compositeService.AddProvider(gameProvider);
 
-        // Wire up composite provider on ContentManager for cross-mod fallback
+        // Wire up composite provider on ContentManager for cross-mod asset resolution
         var contentManager = _services.GetService<ContentManager>();
         if (contentManager != null)
         {
             contentManager.CompositeProvider = _compositeService;
             Log.Info("[ModContentManager] Wired composite provider on ContentManager");
+        }
+
+        // Subscribe to device creation so mods registered before GraphicsDevice init
+        // can be rebound to the correct platform asset directory before SceneSystem loads content.
+        if (!_deviceCreatedSubscribed)
+        {
+            var graphicsDeviceService = _services.GetService<IGraphicsDeviceService>();
+            if (graphicsDeviceService != null)
+            {
+                graphicsDeviceService.DeviceCreated += OnGraphicsDeviceCreated;
+                _deviceCreatedSubscribed = true;
+                Log.Info("[ModContentManager] Subscribed to GraphicsDevice.DeviceCreated for platform refresh");
+            }
         }
 
         Log.Info("[ModContentManager] Registered game content provider");
@@ -65,6 +86,10 @@ public class ModContentManager
     /// <summary>
     /// Creates a file provider for a mod's assets and adds it to the composite.
     /// Also loads asset-guids.json for GUID-aware content resolution.
+    ///
+    /// Supports both the new multi-platform layout (assets/windows-vulkan/, assets/windows-dx11/,
+    /// assets/windows-dx12/) and the legacy flat layout (assets/index at root).
+    /// Platform selection is based on the active GraphicsDevice.Platform.
     /// </summary>
     public void RegisterModContent(ModPackage package)
     {
@@ -87,44 +112,136 @@ public class ModContentManager
             _modProviders[package.Manifest.Id] = provider;
 
             // Merge mod's ContentIndexMap entries into the game's primary index
-            // This enables ContentManager.Exists(url) to find mod assets
             MergeIntoGameIndex(objectDatabase.ContentIndexMap, package.Manifest.Id);
 
             Log.Info($"[ModContentManager] Registered mod content: {package.Manifest.Id} (database mode, {objectDatabase.ContentIndexMap.GetMergedIdMap().Count()} index entries)");
         }
-        else if (Directory.Exists(modAssetPath) && File.Exists(Path.Combine(modAssetPath, "index")))
-        {
-            // Only use directory mode if there's an actual compiled index file
-            // Mount a VFS provider for this mod's assets directory
-            var vfsUrl = $"/mod-assets-{package.Manifest.Id}";
-            try
-            {
-                VirtualFileSystem.RemountFileSystem(vfsUrl, modAssetPath);
-            }
-            catch (Exception ex)
-            {
-                Log.Warning($"[ModContentManager] Failed to mount VFS for mod '{package.Manifest.Id}': {ex.Message}");
-            }
-
-            var objectDatabase = new ObjectDatabase(vfsUrl, "index", loadDefaultBundle: false);
-            var provider = new DatabaseFileProvider(objectDatabase);
-            _compositeService.AddProvider(provider);
-            _modProviders[package.Manifest.Id] = provider;
-
-            // Merge mod's ContentIndexMap entries into the game's primary index
-            MergeIntoGameIndex(objectDatabase.ContentIndexMap, package.Manifest.Id);
-
-            Log.Info($"[ModContentManager] Registered mod content: {package.Manifest.Id} (loose assets mode, {objectDatabase.ContentIndexMap.GetMergedIdMap().Count()} index entries)");
-        }
         else if (Directory.Exists(modAssetPath))
         {
-            // Assets directory exists but has no compiled index — raw source files only
-            Log.Info($"[ModContentManager] Mod '{package.Manifest.Id}' has raw assets in {modAssetPath} (no compiled index — requires asset pipeline)");
+            // Try platform-aware selection first (new multi-platform layout)
+            var platformAssetPath = SelectPlatformAssetPath(modAssetPath, package.Manifest.Id);
+
+            // GraphicsDevice may not exist yet during early mod loading. If we had to fall back to
+            // an arbitrary platform directory, queue the mod for re-registration on DeviceCreated
+            // so SceneSystem loads content from the correct directory.
+            var deviceNotReady = GetCurrentPlatformDirectoryName() == null;
+
+            if (platformAssetPath != null && File.Exists(Path.Combine(platformAssetPath, "index")))
+            {
+                RegisterPlatformAssets(package, platformAssetPath);
+
+                if (deviceNotReady)
+                {
+                    _deferredPlatformPackages[package.Manifest.Id] = package;
+                    Log.Info($"[ModContentManager] Mod '{package.Manifest.Id}' registered with fallback platform assets; will refresh after GraphicsDevice init");
+                }
+            }
+            else if (File.Exists(Path.Combine(modAssetPath, "index")))
+            {
+                // Legacy flat layout: assets/index at root (no platform subdirectories)
+                RegisterPlatformAssets(package, modAssetPath);
+            }
+            else
+            {
+                // Assets directory exists but has no compiled index — raw source files only
+                Log.Info($"[ModContentManager] Mod '{package.Manifest.Id}' has raw assets in {modAssetPath} (no compiled index — requires asset pipeline)");
+            }
         }
         else
         {
             Log.Info($"[ModContentManager] Mod '{package.Manifest.Id}' has no assets — skipping content registration");
         }
+    }
+
+    /// <summary>
+    /// Selects the platform-specific asset path based on the current GraphicsDevice.Platform.
+    /// Falls back to whichever platform directory exists if the exact match isn't present.
+    /// </summary>
+    private string? SelectPlatformAssetPath(string assetsDir, string modId)
+    {
+        // Only treat directories matching the {os}-{graphicsapi} pattern as platform dirs.
+        // The legacy flat layout has hash bucket subdirs (e.g., "04", "2c", "5f") and "bundles/",
+        // "tmp/" — these must NOT be mistaken for platform directories.
+        var knownPlatformDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "windows-vulkan", "windows-dx11", "windows-dx12",
+            "linux-vulkan", "macos-vulkan", "macos-metal",
+        };
+
+        var platformDirs = Directory.GetDirectories(assetsDir)
+            .Select(d => Path.GetFileName(d))
+            .Where(n => n != null && knownPlatformDirs.Contains(n))
+            .ToList();
+
+        if (platformDirs.Count == 0)
+            return null; // No platform subdirectories → use legacy flat layout
+
+        // Try to determine current platform from GraphicsDevice
+        var currentPlatformDir = GetCurrentPlatformDirectoryName();
+
+        if (currentPlatformDir != null && platformDirs.Contains(currentPlatformDir))
+        {
+            Log.Info($"[ModContentManager] Selected platform assets: {currentPlatformDir} for mod '{modId}'");
+            return Path.Combine(assetsDir, currentPlatformDir);
+        }
+
+        // Fallback: use the first available platform directory
+        var fallback = platformDirs[0];
+        Log.Warning($"[ModContentManager] Exact platform match not found for mod '{modId}'. " +
+                    $"Using fallback: {fallback}. Available: {string.Join(", ", platformDirs)}");
+        return Path.Combine(assetsDir, fallback);
+    }
+
+    /// <summary>
+    /// Gets the current platform's directory name based on GraphicsDevice.Platform.
+    /// Returns null if the graphics device is not yet available (early loading).
+    /// </summary>
+    private static string? GetCurrentPlatformDirectoryName()
+    {
+        try
+        {
+            // GraphicsDevice.Platform is a static property available once any device is created.
+            // During early mod loading (before GraphicsDevice init), this defaults to Null.
+            var platform = GraphicsDevice.Platform;
+            return platform switch
+            {
+                GraphicsPlatform.Vulkan => "windows-vulkan",
+                GraphicsPlatform.Direct3D11 => "windows-dx11",
+                GraphicsPlatform.Direct3D12 => "windows-dx12",
+                _ => null, // Null or unknown → let caller fall back
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Registers a platform-specific asset directory as a file provider.
+    /// </summary>
+    private void RegisterPlatformAssets(ModPackage package, string assetPath)
+    {
+        // Mount a VFS provider for this mod's platform-specific assets directory
+        var vfsUrl = $"/mod-assets-{package.Manifest.Id}";
+        try
+        {
+            VirtualFileSystem.RemountFileSystem(vfsUrl, assetPath);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning($"[ModContentManager] Failed to mount VFS for mod '{package.Manifest.Id}': {ex.Message}");
+        }
+
+            var objectDatabase = new ObjectDatabase(vfsUrl, "index", loadDefaultBundle: true);
+        var provider = new DatabaseFileProvider(objectDatabase);
+        _compositeService.AddProvider(provider);
+        _modProviders[package.Manifest.Id] = provider;
+
+        // Merge mod's ContentIndexMap entries into the game's primary index
+        MergeIntoGameIndex(objectDatabase.ContentIndexMap, package.Manifest.Id);
+
+        Log.Info($"[ModContentManager] Registered mod content: {package.Manifest.Id} (platform assets, {objectDatabase.ContentIndexMap.GetMergedIdMap().Count()} index entries, path: {assetPath})");
     }
 
     /// <summary>
@@ -155,6 +272,44 @@ public class ModContentManager
         catch (Exception ex)
         {
             Log.Warning($"[ModContentManager] Failed to merge index for mod '{modId}': {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Called once the GraphicsDevice is created. Re-registers any mods that were
+    /// loaded before the device existed so they bind to the correct platform asset
+    /// directory before SceneSystem.LoadContent() runs.
+    /// </summary>
+    private void OnGraphicsDeviceCreated(object? sender, EventArgs e)
+    {
+        RefreshPlatformProviders();
+    }
+
+    /// <summary>
+    /// Re-registers mods that were bound to a fallback platform directory because
+    /// GraphicsDevice.Platform was not yet available. Scene content has not loaded
+    /// when this runs, so switching to the correct directory is safe.
+    /// </summary>
+    public void RefreshPlatformProviders()
+    {
+        if (_deferredPlatformPackages.Count == 0)
+            return;
+
+        var actualPlatformDir = GetCurrentPlatformDirectoryName();
+        if (actualPlatformDir == null)
+        {
+            Log.Info("[ModContentManager] GraphicsDevice still not available — platform refresh deferred");
+            return;
+        }
+
+        var deferred = _deferredPlatformPackages.Values.ToList();
+        _deferredPlatformPackages.Clear();
+
+        foreach (var package in deferred)
+        {
+            Log.Info($"[ModContentManager] Refreshing platform-specific content for mod '{package.Manifest.Id}' (selected: {actualPlatformDir})");
+            UnregisterModContent(package);
+            RegisterModContent(package);
         }
     }
 
@@ -348,9 +503,17 @@ public class ModContentManager
 
     public void Dispose()
     {
+        if (_deviceCreatedSubscribed)
+        {
+            var graphicsDeviceService = _services.GetService<IGraphicsDeviceService>();
+            if (graphicsDeviceService != null)
+                graphicsDeviceService.DeviceCreated -= OnGraphicsDeviceCreated;
+        }
+
         foreach (var provider in _modProviders.Values)
             provider.Dispose();
         _modProviders.Clear();
+        _deferredPlatformPackages.Clear();
         _modGuidMappings.Clear();
         _compositeService.Dispose();
     }

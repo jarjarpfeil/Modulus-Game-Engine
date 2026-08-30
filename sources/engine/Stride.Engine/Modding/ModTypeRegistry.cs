@@ -34,10 +34,27 @@ public class ModTypeRegistry
         try
         {
             // Register with AssemblyRegistry for type resolution
-            AssemblyRegistry.Register(assembly, "mods");
+            AssemblyRegistry.Register(assembly, AssemblyCommonCategories.Engine);
+
+            // CRITICAL: Run the weaver-emitted [ModuleInitializer] BEFORE looking up AssemblySerializers.
+            // The module ctor populates DataSerializerFactory.AvailableAssemblySerializers (and thus
+            // DataContractAliasMapping + ProfileSerializer cache + invalidates SerializerSelector cache).
+            // Without this, GetAssemblySerializers returns null, RegisterSerializationAssembly noops,
+            // and the mod's DataContract aliases never register — so ScriptComponent / EntityComponent
+            // subclasses from the mod silently fail to resolve at scene-deserialization time.
+            foreach (var module in assembly.GetModules())
+            {
+                try
+                {
+                    ModuleRuntimeHelpers.RunModuleConstructor(module);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning($"[ModTypeRegistry] Module constructor for '{module.Name}' in '{assembly.GetName().Name}' threw: {ex.Message}");
+                }
+            }
 
             // Register with DataSerializerFactory for serialization
-            // Scan the assembly for DataSerializer types and register them
             var assemblySerializers = DataSerializerFactory.GetAssemblySerializers(assembly);
             if (assemblySerializers != null)
             {
@@ -45,7 +62,10 @@ public class ModTypeRegistry
             }
             else
             {
-                // Register directly (it may get its serializers discovered later)
+                // Mod assembly was not weaved by Stride.AssemblyProcessor (no [AssemblySerializerFactoryAttribute]).
+                // Register the assembly directly — RegisterSerializationAssembly will look it up in 
+                // AvailableAssemblySerializers (a no-op) but the assembly is still registered with 
+                // AssemblyRegistry above, enabling Type.GetType resolution even without aliases.
                 DataSerializerFactory.RegisterSerializationAssembly(assembly);
             }
 

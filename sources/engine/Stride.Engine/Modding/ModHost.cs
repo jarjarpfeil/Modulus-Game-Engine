@@ -278,8 +278,35 @@ public class ModHost
                 $"Mod '{manifest.Id}' has GUID collisions with existing mods. Loading aborted.");
         }
 
-        // Register mod shaders
+        // Register mod shaders (declarations from manifest)
         _shaderManager.RegisterModShaders(manifest.Id, manifest);
+
+        // Wire the EffectSystem lazily if it wasn't available when ModHost was
+        // constructed. ModHost is created in the Game() ctor, but EffectSystem is
+        // only instantiated later in Game.Initialize and registered as a service.
+        // By the time LoadMod runs (during LoadModsEarly/LoadAllMods), the
+        // EffectSystem service is available, so resolve it here. Without this,
+        // RegisterShaderBytecodeBundles no-ops with "EffectSystem not set".
+        if (_shaderManager.EffectSystem == null)
+        {
+            var effectSystem = _services.GetService<Rendering.EffectSystem>();
+            if (effectSystem != null)
+            {
+                _shaderManager.SetEffectSystem(effectSystem);
+            }
+        }
+
+        // Register precompiled shader bytecode bundles (.sdbundle) with EffectSystem
+        try
+        {
+            int bytecodeCount = _shaderManager.RegisterShaderBytecodeBundles(manifest.Id, package.ModDirectory, manifest);
+            if (bytecodeCount > 0)
+                Log.Info($"[ModHost] Registered {bytecodeCount} precompiled shader(s) for mod '{manifest.Id}'");
+        }
+        catch (Exception ex)
+        {
+            Log.Warning($"[ModHost] Failed to register shader bytecode for mod '{manifest.Id}': {ex.Message}");
+        }
 
         // Register mod scenes (catalog + behavior)
         _sceneManager.RegisterModScenes(package);
@@ -431,8 +458,8 @@ public class ModHost
         // Unsubscribe all event handlers
         _eventBus.UnsubscribeAll(modId);
 
-        // Unregister mod shaders
-        _shaderManager.UnregisterModShaders(modId);
+        // Unregister mod shaders (also cleans up EffectSystem precompiled bytecode)
+        _shaderManager.UnregisterModShaders(modId, package.Manifest);
 
         // Unregister mod content (removes GUID mappings too)
         _contentManager.UnregisterModContent(package);

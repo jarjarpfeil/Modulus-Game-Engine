@@ -39,7 +39,9 @@ D:\Modulus-Game-Engine\
 │   ├── assets/                # Asset pipeline
 │   ├── presentation/          # Stride.UI (WPF-based UI)
 │   ├── tools/                 # AssetCompiler, etc.
-│   │   └── ModulusEngine.MCPServer/   # C# MCP server (HTTP → engine)
+│   │   ├── ModulusEngine.MCPServer/   # C# MCP server (HTTP → engine)
+│   │   ├── Modulus.Mod.PackTool/      # CLI: mod verification, GUID gen, packaging
+│   │   └── Modulus.Mod.Sdk/           # MSBuild targets for mod development (NuGet)
 │   └── templates/             # dotnet new templates
 ├── build/                     # Solution + solution filters
 │   ├── Stride.sln             # full solution
@@ -249,6 +251,18 @@ dotnet test build/Stride.Tests.Simple.slnf -p:StrideNativeWindowsArm64Enabled=fa
 
 # launch Game Studio
 dotnet run --project sources/editor/Stride.GameStudio/Stride.GameStudio.csproj
+
+# build the mod tooling
+dotnet pack sources/tools/Modulus.Mod.Sdk/Modulus.Mod.Sdk.csproj -p:StrideNativeWindowsArm64Enabled=false
+
+# use the PackTool CLI directly
+dotnet sources/tools/Modulus.Mod.PackTool/bin/Debug/net10.0/Modulus.Mod.PackTool.dll help
+dotnet sources/tools/Modulus.Mod.PackTool/bin/Debug/net10.0/Modulus.Mod.PackTool.dll gen-guids \
+  --db-path <path-to-assets-dir> --output asset-guids.json
+dotnet sources/tools/Modulus.Mod.PackTool/bin/Debug/net10.0/Modulus.Mod.PackTool.dll verify \
+  --mod-dir <path-to-staged-mod> [--game-db-path <path>] [--strict]
+dotnet sources/tools/Modulus.Mod.PackTool/bin/Debug/net10.0/Modulus.Mod.PackTool.dll pack \
+  --source <path-to-staged-mod> --output MyMod.modpkg
 
 # pack the NuGet (produces bin/packages/Modulus.Engine.nupkg)
 dotnet pack sources/engine/Stride.Engine/Stride.Engine.csproj -p:StrideNativeWindowsArm64Enabled=false

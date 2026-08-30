@@ -1,7 +1,6 @@
 // Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org & https://stride3d.net)
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
-using System.Linq;
 using Stride.Core;
 using Stride.Core.Diagnostics;
 using Stride.Core.Serialization.Contents;
@@ -14,8 +13,16 @@ namespace Stride.Engine.Modding;
 /// Lightweight game system that auto-discovers and loads mods on the first frame.
 /// Added automatically by <see cref="Game.Initialize"/> — no game code required.
 ///
-/// For Replace-behavior mod scenes that lack renderable geometry, merges the original
-/// game scene's entities so the window always shows something visible.
+/// The mod scene is used as-is. We do NOT merge host geometry into it: many mod
+/// scenes are "shells" (camera + scripts + UI) whose visible content is spawned at
+/// runtime by SyncScripts, so they legitimately have no static
+/// <see cref="ModelComponent"/>/<see cref="BackgroundComponent"/>. Merging host
+/// geometry into such a shell clobbers it. Host games that want a geometry fallback
+/// should opt in via an explicit API, not by default.
+///
+/// After the scene loads, this system only ensures the mod scene's camera is bound
+/// to the active compositor slot (so the replacement scene actually renders through
+/// the host's compositor).
 ///
 /// One-shot: disables itself after the first frame.
 /// </summary>
@@ -60,48 +67,14 @@ public class ModAutoLoadSystem : GameSystemBase
         if (sceneSystem?.SceneInstance?.RootScene == null) return;
         var rootScene = sceneSystem.SceneInstance.RootScene;
 
-        // For Replace-behavior scenes, merge the original game scene's entities.
-        // Mod scenes compiled without GPU resources typically only have Camera+Light.
-        // The original scene's pre-compiled geometry (Ground, Sphere, Skybox, etc.)
-        // provides visible content. Runtime Material.New() doesn't work because
-        // the EffectSystem can't compile shaders on the fly.
-        var originalUrl = ModSceneManager.OriginalSceneUrl;
-        if (!string.IsNullOrEmpty(originalUrl))
+        // The mod scene is used as-is (see class remarks). We do NOT merge host
+        // geometry into it: many mod scenes are "shells" whose visible content is
+        // spawned at runtime by SyncScripts. Merging host geometry here would
+        // clobber the shell with the host's blank-template scene (a previous
+        // regression did exactly this and masked whether the mod scene worked).
+        if (!string.IsNullOrEmpty(ModSceneManager.OriginalSceneUrl))
         {
-            var contentManager = Services.GetService<ContentManager>();
-            if (contentManager != null && contentManager.Exists(originalUrl))
-            {
-                var originalScene = contentManager.Load<Scene>(originalUrl);
-                if (originalScene != null)
-                {
-                    Log.Info($"[ModAutoLoad] Merging original scene '{originalUrl}' ({originalScene.Entities.Count} entities) into mod scene");
-
-                    // Remove mod scene's camera to avoid duplicate-camera conflicts
-                    // (the original scene brings its own camera)
-                    var modCamera = rootScene.Entities.FirstOrDefault(e => e.Get<CameraComponent>() != null);
-                    if (modCamera != null)
-                    {
-                        rootScene.Entities.Remove(modCamera);
-                        Log.Info("[ModAutoLoad] Removed mod scene camera (using original scene camera instead)");
-                    }
-
-                    // Move entities from original scene to mod scene
-                    foreach (var entity in originalScene.Entities.ToList())
-                    {
-                        originalScene.Entities.Remove(entity);
-                        rootScene.Entities.Add(entity);
-                    }
-                    foreach (var child in originalScene.Children.ToList())
-                    {
-                        originalScene.Children.Remove(child);
-                        rootScene.Children.Add(child);
-                    }
-                }
-            }
-            else
-            {
-                Log.Warning($"[ModAutoLoad] Original scene '{originalUrl}' not found in content database");
-            }
+            Log.Info($"[ModAutoLoad] Using mod scene as-is (host original scene '{ModSceneManager.OriginalSceneUrl}' not merged into replacement)");
         }
 
         // Ensure camera is assigned to the compositor's camera slot

@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "Modulus Engine Contributors",
+  "classifications": ["Mod", "Modulus", "Library", "Game"],
+  "identity": "ModulusEngine.ModTemplate.CSharp",
+  "name": "Modulus Engine Mod",
+  "shortName": "modulus-mod",
+  "sourceName": "MyMod",
+  "preferNameDirectory": true,
+  "tags": {
+    "language": "C#",
+    "type": "project"
+  },
+  "symbols": {
+    "ModId": {
+      "type": "parameter",
+      "datatype": "string",
+      "defaultValue": "com.example.mymod",
+      "description": "Mod ID (kebab-case, e.g. com.example.mymod)"
+    },
+    "ModType": {
+      "type": "parameter",
+      "datatype": "choice",
+      "choices": [
+        {
+          "choice": "standard",
+          "description": "Code + assets (default)"
+        },
+        {
+          "choice": "data",
+          "description": "Assets only, no code"
+        },
+        {
+          "choice": "patch",
+          "description": "Patches another mod"
+        }
+      ],
+      "defaultValue": "standard"
+    }
+  }
+}

@@ -2,6 +2,7 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Reflection;
@@ -53,6 +54,16 @@ public sealed class ModPackage
     /// <summary>Loaded assemblies from this mod.</summary>
     public Assembly? ModAssembly { get; internal set; }
 
+    /// <summary>
+    /// Assemblies that must resolve from the host ALC, not the mod's collectible ALC.
+    /// Loading duplicates causes EntityComponent type-mismatch failures.
+    /// </summary>
+    private static readonly HashSet<string> SharedAssemblies = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Modulus.Modding.Api.dll",
+        "Modulus.Mod.Sdk.dll",
+    };
+
     public ModPackage(ModManifest manifest, string modDirectory)
     {
         Manifest = manifest ?? throw new ArgumentNullException(nameof(manifest));
@@ -66,20 +77,30 @@ public sealed class ModPackage
     {
         LoadContext = new ModLoadContext(host, Manifest.Id, ModDirectory);
 
-        var assembliesDir = Path.Combine(ModDirectory, "assemblies");
-        if (Directory.Exists(assembliesDir))
+        var loadedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        LoadDllsFromDir(Path.Combine(ModDirectory, "assemblies"), LoadContext.LoadFromModPath, loadedNames);
+        LoadDllsFromDir(Path.Combine(ModDirectory, "bin", "Debug"), LoadContext.LoadFromModPath, loadedNames);
+        LoadDllsFromDir(Path.Combine(ModDirectory, "bin", "Release"), LoadContext.LoadFromModPath, loadedNames);
+
+        // Scan bin/<Config>/<TFM>/ (e.g. bin/Debug/net10.0/)
+        var binDir = Path.Combine(ModDirectory, "bin");
+        if (Directory.Exists(binDir))
         {
-            foreach (var dll in Directory.GetFiles(assembliesDir, "*.dll"))
+            foreach (var configDir in Directory.GetDirectories(binDir))
             {
-                LoadContext.LoadFromModPath(dll);
+                if (Directory.Exists(configDir))
+                {
+                    foreach (var tfmDir in Directory.GetDirectories(configDir))
+                    {
+                        LoadDllsFromDir(tfmDir, LoadContext.LoadFromModPath, loadedNames);
+                    }
+                }
             }
         }
 
-        // Also try loading assemblies from the root (single DLL mods)
-        foreach (var dll in Directory.GetFiles(ModDirectory, "*.dll"))
-        {
-            LoadContext.LoadFromModPath(dll);
-        }
+        // Root-level fallback (single-DLL mods)
+        LoadDllsFromDir(ModDirectory, LoadContext.LoadFromModPath, loadedNames);
     }
 
     /// <summary>
@@ -91,19 +112,30 @@ public sealed class ModPackage
     {
         NativeLoadContext = new NativeModLoadContext(host, Manifest.Id, ModDirectory);
 
-        var assembliesDir = Path.Combine(ModDirectory, "assemblies");
-        if (Directory.Exists(assembliesDir))
+        var loadedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        LoadDllsFromDir(Path.Combine(ModDirectory, "assemblies"), NativeLoadContext.LoadFromModPath, loadedNames);
+        LoadDllsFromDir(Path.Combine(ModDirectory, "bin", "Debug"), NativeLoadContext.LoadFromModPath, loadedNames);
+        LoadDllsFromDir(Path.Combine(ModDirectory, "bin", "Release"), NativeLoadContext.LoadFromModPath, loadedNames);
+
+        // Scan bin/<Config>/<TFM>/ (e.g. bin/Debug/net10.0/)
+        var binDir = Path.Combine(ModDirectory, "bin");
+        if (Directory.Exists(binDir))
         {
-            foreach (var dll in Directory.GetFiles(assembliesDir, "*.dll"))
+            foreach (var configDir in Directory.GetDirectories(binDir))
             {
-                NativeLoadContext.LoadFromModPath(dll);
+                if (Directory.Exists(configDir))
+                {
+                    foreach (var tfmDir in Directory.GetDirectories(configDir))
+                    {
+                        LoadDllsFromDir(tfmDir, NativeLoadContext.LoadFromModPath, loadedNames);
+                    }
+                }
             }
         }
 
-        foreach (var dll in Directory.GetFiles(ModDirectory, "*.dll"))
-        {
-            NativeLoadContext.LoadFromModPath(dll);
-        }
+        // Root-level fallback (single-DLL mods)
+        LoadDllsFromDir(ModDirectory, NativeLoadContext.LoadFromModPath, loadedNames);
 
         IsHotSwappable = false;
     }
@@ -174,6 +206,40 @@ public sealed class ModPackage
         // Return package pointing to temp directory for inspection
         // Caller should copy to final location if keeping
         return new ModPackage(manifest, tempDir);
+    }
+
+    /// <summary>
+    /// Scan a directory for DLLs, skip shared/known assemblies, skip duplicates,
+    /// and load each via the provided loader delegate.
+    /// </summary>
+    private static void LoadDllsFromDir(
+        string dir,
+        Func<string, Assembly> load,
+        HashSet<string> loadedNames)
+    {
+        if (!Directory.Exists(dir))
+            return;
+
+        foreach (var dll in Directory.GetFiles(dir, "*.dll"))
+        {
+            var name = Path.GetFileName(dll);
+            if (IsSharedAssembly(name))
+                continue;
+            if (!loadedNames.Add(name))
+                continue;
+            load(dll);
+        }
+    }
+
+    /// <summary>
+    /// Returns true if this assembly is shared/contract and must resolve from
+    /// the host ALC rather than the mod's collectible ALC.
+    /// </summary>
+    private static bool IsSharedAssembly(string dllName)
+    {
+        if (dllName.StartsWith("Stride.", StringComparison.OrdinalIgnoreCase))
+            return true;
+        return SharedAssemblies.Contains(dllName);
     }
 }
 

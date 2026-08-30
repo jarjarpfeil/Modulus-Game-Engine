@@ -1,5 +1,6 @@
 {
   "$schema": "https://app.kilo.ai/config.json",
+  "default_agent": "brain",
   "mcp": {
     "modulus": {
       "type": "local",

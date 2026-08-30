@@ -1,0 +1,16 @@
+{
+  "id": "com.modulus.spike.script",
+  "name": "Spike mod-assembly ScriptComponent",
+  "version": "1.0.0",
+  "apiVersion": "1.0",
+  "author": "spike",
+  "description": "Throwaway spike shipping SpaceEscape.Game.dll so ScriptSystem can attempt to resolve scene ScriptComponent type references from a mod assembly.",
+  "entryPoint": null,
+  "components": [],
+  "systems": [],
+  "scenes": [],
+  "assets": [],
+  "loadOrder": 50,
+  "tags": ["spike"],
+  "type": "standard"
+}

@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <PackageId>Modulus.Mod.Sdk</PackageId>
+    <Description>Modulus Engine mod development SDK — MSBuild targets, asset compilation, verification, and packaging.</Description>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <ContentTargetFolders>build</ContentTargetFolders>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <NoPackageAnalysis>true</NoPackageAnalysis>
+    <DevelopmentDependent>true</DevelopmentDependent>
+  </PropertyGroup>
+
+  <!-- Reference the PackTool project so it builds before this project. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Modulus.Mod.PackTool\Modulus.Mod.PackTool.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <SkipGetTargetFrameworkProperties>true</SkipGetTargetFrameworkProperties>
+    </ProjectReference>
+  </ItemGroup>
+
+  <!-- Bundle the PackTool's runtime files inside the NuGet package's tools/ directory.
+       These are needed for 'dotnet exec Modulus.Mod.PackTool.dll' to work in MSBuild targets. -->
+  <ItemGroup>
+    <Content Include="..\Modulus.Mod.PackTool\bin\$(Configuration)\net10.0\Modulus.Mod.PackTool.dll"
+             Pack="true" PackagePath="tools\Modulus.Mod.PackTool\" />
+    <Content Include="..\Modulus.Mod.PackTool\bin\$(Configuration)\net10.0\Modulus.Mod.PackTool.runtimeconfig.json"
+             Pack="true" PackagePath="tools\Modulus.Mod.PackTool\" />
+    <Content Include="..\Modulus.Mod.PackTool\bin\$(Configuration)\net10.0\Modulus.Mod.PackTool.deps.json"
+             Pack="true" PackagePath="tools\Modulus.Mod.PackTool\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="build\Modulus.Mod.Sdk.props" Pack="true" PackagePath="build\Modulus.Mod.Sdk.props" />
+    <Content Include="build\Modulus.Mod.Sdk.targets" Pack="true" PackagePath="build\Modulus.Mod.Sdk.targets" />
+    <Content Include="build\Version.props" Pack="true" PackagePath="build\Version.props" />
+  </ItemGroup>
+
+</Project>

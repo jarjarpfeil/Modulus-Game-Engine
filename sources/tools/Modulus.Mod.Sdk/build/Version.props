@@ -1,0 +1,8 @@
+<!-- Centralized version file: defines $(ModulusEngineVersion) for the CompilerApp dependency.
+     This file is imported by Modulus.Mod.Sdk.props before the targets file evaluates.
+     It must be kept in sync with the Modulus.Engine NuGet package version. -->
+<Project>
+  <PropertyGroup>
+    <ModulusEngineVersion>4.4.0.2</ModulusEngineVersion>
+  </PropertyGroup>
+</Project>

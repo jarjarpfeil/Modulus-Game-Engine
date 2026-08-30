@@ -1,0 +1,181 @@
+<!--
+  Modulus.Mod.Sdk.targets — the mod build pipeline.
+
+  Build flow:
+    1. C# compilation (standard dotnet build)
+    2. ExcludeEngineAssembliesFromOutput (Trap 1: pre-copy DLL filtering)
+    3. EnforceModProjectReferenceIsolation (Trap 2: Private=false on ProjectReferences)
+    4. ModCompileAssets (triple-platform AssetCompiler: Vulkan + DX11 + DX12)
+    5. ModEmitAssetGuidJson (Trap 3: generates asset-guids.json from index file)
+    6. ModStage (copies mod.json + assemblies into staging directory)
+    7. ModVerify (validates structure, manifest, assemblies, collisions)
+    8. ModPack (creates .modpkg ZIP)
+-->
+<Project>
+
+  <!-- ═════════════════════════════════════════════════════════════════
+       TRAP 1 FIX: Intercept BEFORE copy, never delete after build.
+       Remove Stride engine assemblies from ReferenceCopyLocalPaths so
+       they're never written to the output directory. MSBuild's Fast
+       Up-To-Date Check stays green because the files were never expected.
+       ═════════════════════════════════════════════════════════════════ -->
+  <Target Name="ExcludeEngineAssembliesFromOutput"
+          BeforeTargets="GetCopyToOutputDirectoryItems;CopyFilesToOutputDirectory">
+    <ItemGroup>
+      <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)"
+        Condition="$([System.String]::Copy('%(Filename)').StartsWith('Stride.'))" />
+      <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)"
+        Condition="$([System.String]::Copy('%(Filename)').StartsWith('Modulus.Engine'))" />
+    </ItemGroup>
+  </Target>
+
+  <!-- ═════════════════════════════════════════════════════════════════
+       TRAP 2 FIX: Prevent game assembly + downstream deps from being
+       copied into the mod's output directory.
+
+       VERIFIED APPROACH: The existing test mods use plain ProjectReference
+       with Private=false. The ReferenceCopyLocalPaths removal in Trap 1's
+       ExcludeEngineAssembliesFromOutput target handles the cleanup.
+
+       ReferenceOutputAssembly=false + OutputItemType=Analyzer was REJECTED
+       — Analyzer items are loaded by Roslyn as diagnostic assemblies, NOT
+       as metadata references. Mod code cannot compile against game types
+       via Analyzer references.
+       ═════════════════════════════════════════════════════════════════ -->
+  <Target Name="EnforceModProjectReferenceIsolation"
+          BeforeTargets="ResolveProjectReferences">
+    <ItemGroup>
+      <ProjectReference>
+        <Private>false</Private>
+      </ProjectReference>
+    </ItemGroup>
+  </Target>
+
+  <!-- ═════════════════════════════════════════════════════════════════
+       Phase 1: Compile assets for THREE platforms (Vulkan + DX11 + DX12)
+
+       TRAP 6 FIX: Inputs/Outputs so MSBuild skips this target when no
+       asset files changed since the last build.
+
+       OPTIMIZATION: Pure code mods (no .sdscene/.sdmat/.sdsl files)
+       skip the AssetCompiler entirely.
+
+       Input item group uses a dedicated StrideAssets pattern instead of
+       @(None) which contains far more than just asset files.
+       ═════════════════════════════════════════════════════════════════ -->
+  <ItemGroup>
+    <StrideAssets Include="Assets\**\*.sdscene" />
+    <StrideAssets Include="Assets\**\*.sdmat" />
+    <StrideAssets Include="Assets\**\*.sdpromodel" />
+    <StrideAssets Include="Assets\**\*.sdsl" />
+    <StrideAssets Include="Assets\**\*.sdtex" />
+    <StrideAssets Include="Assets\**\*.sdsky" />
+    <StrideAssets Include="Assets\**\*.sdgfxcomp" />
+    <StrideAssets Include="Assets\**\*.sdgamesettings" />
+    <StrideAssets Include="Assets\**\*.sdfnt" />
+    <StrideAssets Include="Assets\**\*.sdanim" />
+    <!-- NOTE: mod.json is NOT an asset file. Pure code mods (no Assets/) skip
+         the AssetCompiler entirely. ModStage copies mod.json separately. -->
+  </ItemGroup>
+
+  <Target Name="ModCompileAssets"
+          AfterTargets="Build"
+          Inputs="@(StrideAssets)"
+          Outputs="$(ModPkgStaging)assets\windows-vulkan\index;$(ModPkgStaging)assets\windows-dx11\index;$(ModPkgStaging)assets\windows-dx12\index"
+          Condition="Exists('$(ModManifest)') AND '@(StrideAssets)' != ''">
+
+    <PropertyGroup>
+      <!-- Resolve the AssetCompiler from the Stride.Core.Assets.CompilerApp NuGet package.
+           The mod project must reference it with GeneratePathProperty="true" so that
+           $(PkgStride_Core_Assets_CompilerApp) is available. -->
+      <StrideCompileAssetCommand Condition="'$(StrideCompileAssetCommand)' == '' and '$(PkgStride_Core_Assets_CompilerApp)' != ''">$([MSBuild]::NormalizePath('$(PkgStride_Core_Assets_CompilerApp)', 'lib', 'net10.0', 'Stride.Core.Assets.CompilerApp.dll'))</StrideCompileAssetCommand>
+    </PropertyGroup>
+
+    <Error Condition="'$(StrideCompileAssetCommand)' == ''"
+           Text="[Modulus.Mod.Sdk] StrideCompileAssetCommand is empty. Add a PackageReference to Stride.Core.Assets.CompilerApp with GeneratePathProperty='true' (or set $(StrideCompileAssetCommand) manually)." />
+
+    <!-- Stage directory: per-platform subdirs (future-proof naming: {os}-{graphicsapi}) -->
+    <MakeDir Directories="$(ModPkgStaging)assets\windows-vulkan" />
+    <MakeDir Directories="$(ModPkgStaging)assets\windows-dx11" />
+    <MakeDir Directories="$(ModPkgStaging)assets\windows-dx12" />
+
+    <!-- Platform 1: Vulkan (SPIR-V) — primary target for Windows/Linux -->
+    <Exec Command="dotnet &quot;$(StrideCompileAssetCommand)&quot; --package-file &quot;$(MSBuildProjectFullPath)&quot; --output-path &quot;$(ModPkgStaging)assets\windows-vulkan&quot; --build-path &quot;$(IntermediateOutputPath)stride-assets-vulkan&quot; --platform Windows --compile-property:StrideGraphicsApi=Vulkan" />
+
+    <!-- Platform 2: Direct3D11 (DXIL) — fallback for Windows -->
+    <Exec Command="dotnet &quot;$(StrideCompileAssetCommand)&quot; --package-file &quot;$(MSBuildProjectFullPath)&quot; --output-path &quot;$(ModPkgStaging)assets\windows-dx11&quot; --build-path &quot;$(IntermediateOutputPath)stride-assets-dx11&quot; --platform Windows --compile-property:StrideGraphicsApi=Direct3D11" />
+
+    <!-- Platform 3: Direct3D12 (DXIL) — modern Windows standard, required for future ray tracing -->
+    <Exec Command="dotnet &quot;$(StrideCompileAssetCommand)&quot; --package-file &quot;$(MSBuildProjectFullPath)&quot; --output-path &quot;$(ModPkgStaging)assets\windows-dx12&quot; --build-path &quot;$(IntermediateOutputPath)stride-assets-dx12&quot; --platform Windows --compile-property:StrideGraphicsApi=Direct3D12" />
+  </Target>
+
+  <!-- ═════════════════════════════════════════════════════════════════
+       Phase 2: Generate asset-guids.json from the compiled index file.
+
+       TRAP 3 MITIGATION: The PackTool reads the plain-text index file
+       (URL + 32-char hex hash per line) and emits a JSON sidecar. No
+       binary deserialization needed — the index format is plain text.
+
+       We read the Vulkan index (all platforms share the same URL→ObjectId
+       mapping; only shader bytecode differs between platforms).
+       ═════════════════════════════════════════════════════════════════ -->
+  <Target Name="ModEmitAssetGuidJson"
+          AfterTargets="ModCompileAssets"
+          Condition="Exists('$(ModPkgStaging)assets\windows-vulkan\index')">
+    <PropertyGroup>
+      <!-- Resolve the PackTool from the SDK package's tools directory -->
+      <ModPackToolCommand>$(MSBuildThisFileDirectory)..\tools\Modulus.Mod.PackTool\Modulus.Mod.PackTool.dll</ModPackToolCommand>
+    </PropertyGroup>
+    <Exec Command="dotnet &quot;$(ModPackToolCommand)&quot; gen-guids --db-path &quot;$(ModPkgStaging)assets\windows-vulkan&quot; --output &quot;$(ModPkgStaging)asset-guids.json&quot;" />
+  </Target>
+
+  <!-- ═════════════════════════════════════════════════════════════════
+       Phase 3: Stage mod.json + (optional) assemblies into staging dir
+       ═════════════════════════════════════════════════════════════════ -->
+  <Target Name="ModStage" AfterTargets="ModEmitAssetGuidJson" Condition="Exists('$(ModManifest)')">
+    <Copy SourceFiles="$(ModManifest)" DestinationFolder="$(ModPkgStaging)" SkipUnchangedFiles="true" />
+    <!-- Copy mod assemblies (already cleaned by ExcludeEngineAssembliesFromOutput) -->
+    <ItemGroup Condition="'$(ModType)' != 'data'">
+      <ModAssemblies Include="$(TargetDir)$(AssemblyName).dll" />
+      <ModAssemblies Include="$(TargetDir)$(AssemblyName).pdb" Condition="Exists('$(TargetDir)$(AssemblyName).pdb')" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ModAssemblies)" DestinationFolder="$(ModPkgStaging)assemblies\" SkipUnchangedFiles="true" />
+  </Target>
+
+  <!-- ═════════════════════════════════════════════════════════════════
+       Phase 4: Verify mod package
+
+       NOTE: $(GameAssetDbPath) is optional for local development. If not set,
+       the verifier skips URL/GUID collision checking and emits [Warning].
+       For release builds, set <ModStrictVerification>true</ModStrictVerification>
+        which treats missing game-db-path as an error.
+       ═════════════════════════════════════════════════════════════════ -->
+  <PropertyGroup>
+    <GameAssetDbPath Condition="'$(GameAssetDbPath)' == ''"></GameAssetDbPath>
+    <ModStrictVerification Condition="'$(ModStrictVerification)' == ''">false</ModStrictVerification>
+  </PropertyGroup>
+
+  <Target Name="ModVerify" AfterTargets="ModStage" Condition="Exists('$(ModManifest)')">
+    <PropertyGroup>
+      <VerifyArgs>--mod-dir &quot;$(ModPkgStaging.TrimEnd('\'))&quot;</VerifyArgs>
+      <VerifyArgs Condition="'$(GameAssetDbPath)' != ''">$(VerifyArgs) --game-db-path &quot;$(GameAssetDbPath)&quot;</VerifyArgs>
+      <VerifyArgs Condition="'$(ModStrictVerification)' == 'true'">$(VerifyArgs) --strict</VerifyArgs>
+    </PropertyGroup>
+    <Exec Command="dotnet &quot;$(MSBuildThisFileDirectory)..\tools\Modulus.Mod.PackTool\Modulus.Mod.PackTool.dll&quot; verify $(VerifyArgs)" IgnoreExitCode="true">
+      <Output TaskParameter="ExitCode" PropertyName="ModVerifyExitCode" />
+    </Exec>
+    <Error Condition="'$(ModVerifyExitCode)' == '1'" Text="[Modulus.Mod.Sdk] Mod verification failed — see output above." />
+    <Warning Condition="'$(ModVerifyExitCode)' == '2'" Text="[Modulus.Mod.Sdk] Mod verification passed with warnings." />
+  </Target>
+
+  <!-- ═════════════════════════════════════════════════════════════════
+       Phase 5: Package into .modpkg
+       ═════════════════════════════════════════════════════════════════ -->
+  <Target Name="ModPack" AfterTargets="ModVerify" Condition="Exists('$(ModManifest)') And ('$(ModVerifyExitCode)' == '0' Or '$(ModVerifyExitCode)' == '2')">
+    <PropertyGroup>
+      <ModPkgOutput>$(BaseOutputPath)$(AssemblyName).modpkg</ModPkgOutput>
+    </PropertyGroup>
+    <Exec Command="dotnet &quot;$(MSBuildThisFileDirectory)..\tools\Modulus.Mod.PackTool\Modulus.Mod.PackTool.dll&quot; pack --source &quot;$(ModPkgStaging.TrimEnd('\'))&quot; --output &quot;$(ModPkgOutput)&quot;" />
+  </Target>
+
+</Project>

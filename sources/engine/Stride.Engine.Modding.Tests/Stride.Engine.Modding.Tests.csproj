@@ -11,6 +11,8 @@
     <ProjectReference Include="..\Stride.Engine\Stride.Engine.csproj" />
     <ProjectReference Include="..\Modulus.Modding.Api\Modulus.Modding.Api.csproj" />
     <ProjectReference Include="..\..\core\Stride.Core.Reflection\Stride.Core.Reflection.csproj" />
+    <!-- Reference the PackTool for pipeline tests -->
+    <ProjectReference Include="..\..\tools\Modulus.Mod.PackTool\Modulus.Mod.PackTool.csproj" />
   </ItemGroup>
   <Import Project="$(StrideRoot)sources/sdk/Stride.Build.Sdk.MultiPlatform.Tests/Sdk/Sdk.targets" />
 </Project>

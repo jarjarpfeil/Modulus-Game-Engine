@@ -1,0 +1,17 @@
+{
+  "id": "com.example.mymod",
+  "name": "MyMod",
+  "version": "1.0.0",
+  "apiVersion": "1.0",
+  "author": "Your Name",
+  "description": "A Modulus Engine mod.",
+  "entryPoint": "MyMod.MyModEntry, MyMod",
+  "components": [],
+  "systems": [],
+  "assets": [],
+  "scenes": [],
+  "loadOrder": 100,
+  "tags": [],
+  "type": "standard",
+  "explicitOverrides": []
+}

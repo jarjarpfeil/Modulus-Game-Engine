@@ -1,0 +1,1 @@
+Copy-Item "C:\Users\jarja\AppData\Local\Temp\kilo\spike2-run.log" "C:\Users\jarja\AppData\Local\Temp\kilo\spike2-run.txt" -Force; "Copied log"
